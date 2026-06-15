@@ -587,8 +587,25 @@ async def index(request: Request):
 
 @app.get("/login")
 async def login(request: Request):
-    if not X_CLIENT_ID:
-        return HTMLResponse("X_CLIENT_ID is not configured on the server.", status_code=500)
+    if not X_CLIENT_ID or "your-" in X_CLIENT_ID or X_CLIENT_ID == "dummy-for-local-testing":
+        return HTMLResponse(
+            "X_CLIENT_ID is not configured. Edit your .env with the real Client ID from https://developer.x.com and restart the server.",
+            status_code=500,
+        )
+
+    # Guard against common placeholder / mismatched redirect_uri values.
+    # A bad redirect_uri is the #1 reason users get stuck on X's site instead of being sent back.
+    bad_redirect_markers = ("dummy", "your-", "example", "change", "localhost:8000/callback")
+    if any(m in X_REDIRECT_URI for m in bad_redirect_markers) or not X_REDIRECT_URI.startswith(("http://127.0.0.1", "https://")):
+        return HTMLResponse(
+            f"X_REDIRECT_URI is not correctly configured for this environment.\n\n"
+            f"Current value: {X_REDIRECT_URI}\n\n"
+            "You must register EXACTLY this value as a Callback URI / Redirect URI in your X App's OAuth 2.0 settings "
+            "(https://developer.x.com → your App → User authentication settings).\n"
+            "For local dev it is typically: http://127.0.0.1:8000/callback\n"
+            "Then set the same value in your .env as X_REDIRECT_URI and restart.",
+            status_code=500,
+        )
 
     verifier, challenge = generate_pkce()
     state = secrets.token_urlsafe(24)
@@ -608,13 +625,27 @@ async def login(request: Request):
     return RedirectResponse(f"{X_AUTHORIZE_URL}?{urlencode(params)}")
 
 @app.get("/callback")
-async def callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+async def callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+):
     if error:
-        return RedirectResponse("/?error=" + error)
+        # Always bring the user back to our tool with a clear message.
+        # X may send error_description for more detail (e.g. redirect_uri mismatch).
+        q = error
+        if error_description:
+            q += ": " + error_description
+        return RedirectResponse(f"/?error={q}")
 
     saved_state = request.session.get("oauth_state")
     verifier = request.session.get("pkce_verifier")
     if not code or not state or state != saved_state or not verifier:
+        # Clean up any leftover temp state and always return the user to our domain
+        request.session.pop("pkce_verifier", None)
+        request.session.pop("oauth_state", None)
         return RedirectResponse("/?error=invalid_oauth_state")
 
     data = {

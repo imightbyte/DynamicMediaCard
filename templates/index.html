@@ -36,18 +36,58 @@
 
   <main class="max-w-4xl mx-auto px-4 py-8" id="update">
     <!-- Signed-out hero -->
-    <div x-data="{ user: null, loading: true }" x-init="loadUser()" x-show="!user && !loading" class="max-w-xl mx-auto text-center py-16">
+    <div x-data="{ 
+          user: null, 
+          loading: true, 
+          oauthError: null,
+          requiredCallback: '{{ x_redirect_uri }}'
+        }" 
+        x-init="
+          loadUser();
+          // Show any error returned by the OAuth callback (e.g. from X when redirect_uri is wrong)
+          const params = new URLSearchParams(window.location.search);
+          const err = params.get('error');
+          if (err) {
+            oauthError = decodeURIComponent(err).replace(/\+/g, ' ');
+            // Clean the URL so refresh doesn't keep showing it
+            history.replaceState({}, '', '/');
+          }
+        " 
+        x-show="!user && !loading" 
+        class="max-w-xl mx-auto text-center py-16">
+
+      <!-- Prominent error box when the OAuth roundtrip failed (common cause: redirect_uri not registered or mismatched) -->
+      <template x-if="oauthError">
+        <div class="mb-8 rounded-2xl border border-red-500/40 bg-red-500/10 text-left p-4 text-sm">
+          <div class="font-semibold text-red-400 mb-1">X sign-in did not complete</div>
+          <div class="text-red-300 mb-3" x-text="oauthError"></div>
+          <div class="text-xs text-muted-foreground space-y-1">
+            <p><strong>Most common fix:</strong> In your X App at <a href="https://developer.x.com" target="_blank" class="underline">developer.x.com</a>, go to the App → User authentication settings → OAuth 2.0, and add <span class="font-mono text-foreground">exactly</span> this Callback URI:</p>
+            <p class="font-mono bg-black/40 px-2 py-1 rounded break-all" x-text="requiredCallback"></p>
+            <p>Then set the <span class="font-mono">X_REDIRECT_URI</span> in your <span class="font-mono">.env</span> to the same value and restart the server.</p>
+            <p class="pt-1">Also make sure the X Project/App has the Ads API enabled and that you are using <span class="font-mono">127.0.0.1</span> (not <span class="font-mono">localhost</span>) for local testing.</p>
+          </div>
+        </div>
+      </template>
+
       <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium mb-4">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
         X Only
       </div>
       <h1 class="text-4xl font-bold tracking-tighter mb-3">Dynamic Media Card Tool</h1>
-      <p class="text-muted-foreground mb-8">Update X website cards and app cards on a schedule.<br>Click below to sign in — this tool supports <span class="font-medium">X sign-in only</span>.</p>
+      <p class="text-muted-foreground mb-6">Update X website cards and app cards on a schedule.<br>Click below to sign in — this tool supports <span class="font-medium">X sign-in only</span>.</p>
+
       <a href="/login" class="btn-primary inline-flex items-center gap-3 px-8 py-3 text-base">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
         Sign in with X
       </a>
-      <p class="mt-4 text-xs text-muted-foreground">Requires an X account that has access to X Ads.</p>
+
+      <div class="mt-6 text-[11px] text-muted-foreground max-w-md mx-auto">
+        Before clicking, make sure this exact Callback URI is registered in your X App's OAuth 2.0 settings:<br>
+        <span class="font-mono text-foreground break-all" x-text="requiredCallback || 'http://127.0.0.1:8000/callback'"></span>
+      </div>
+
+      <p class="mt-3 text-xs text-muted-foreground">Requires an X account that has access to X Ads.</p>
     </div>
 
     <!-- Main app (only when signed in) -->

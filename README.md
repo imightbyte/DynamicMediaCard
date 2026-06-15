@@ -67,7 +67,12 @@ uvicorn main:app --reload --port 8000
 
 5. Open http://127.0.0.1:8000
 
-6. Click **Sign in with X**, complete OAuth, then follow the 4-step gated flow.
+6. Click **Sign in with X**.
+   - You will be redirected to X (this is normal for OAuth).
+   - After you approve, X will automatically redirect you **back** to this tool (the registered Callback URI).
+   - If you stay on X's site instead of coming back, the most common cause is that the Callback URI registered in your X App does not exactly match the `X_REDIRECT_URI` value in your `.env`.
+
+The tool only uses X OAuth — there are no other sign-in options.
 
 ## Deploy (Render, Railway, Fly, etc.)
 
