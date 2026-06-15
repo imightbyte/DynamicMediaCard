@@ -1,0 +1,785 @@
+{% extends "base.html" %}
+
+{% block title %}Dynamic Media Card Tool{% endblock %}
+
+{% block body %}
+  <!-- Navigation (very close to reference) -->
+  <nav class="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl">
+    <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-6">
+        <a href="/" class="font-bold text-lg tracking-tight flex items-center gap-2">
+          <svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+          Dynamic Media Card Tool
+        </a>
+        <a href="#update" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Update Card</a>
+        <a href="#schedules" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Schedules</a>
+      </div>
+
+      <div x-data="userBanner()" x-init="init()" class="flex items-center gap-3">
+        <template x-if="user">
+          <div class="flex items-center gap-2.5">
+            <img x-show="user.profile_image_url" :src="user.profile_image_url" class="w-7 h-7 rounded-full border border-border" />
+            <span class="text-sm font-medium hidden sm:block" x-text="'@' + user.username"></span>
+            <form method="post" action="/logout" class="inline">
+              <button type="submit" class="text-xs text-muted-foreground hover:text-foreground px-2.5 py-1 rounded-lg hover:bg-muted transition-colors">Sign out</button>
+            </form>
+          </div>
+        </template>
+        <template x-if="!user && !loading">
+          <a href="/login" class="btn-primary text-xs py-1.5 px-4">Sign in with X</a>
+        </template>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-4xl mx-auto px-4 py-8" id="update">
+    <!-- Signed-out hero -->
+    <div x-data="{ user: null, loading: true }" x-init="loadUser()" x-show="!user && !loading" class="max-w-xl mx-auto text-center py-16">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium mb-4">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        X Only
+      </div>
+      <h1 class="text-4xl font-bold tracking-tighter mb-3">Dynamic Media Card Tool</h1>
+      <p class="text-muted-foreground mb-8">Update X website cards and app cards on a schedule.<br>Click below to sign in — this tool supports <span class="font-medium">X sign-in only</span>.</p>
+      <a href="/login" class="btn-primary inline-flex items-center gap-3 px-8 py-3 text-base">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        Sign in with X
+      </a>
+      <p class="mt-4 text-xs text-muted-foreground">Requires an X account that has access to X Ads.</p>
+    </div>
+
+    <!-- Main app (only when signed in) -->
+    <div x-data="cardScheduler()" x-init="init()" x-show="user" x-cloak class="space-y-6 pb-20">
+
+      <!-- X Ads Account (exact visual match to reference) -->
+      <div class="bg-card rounded-2xl border border-border p-4 shadow-sm space-y-3">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+            <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <p class="text-sm font-semibold">X Ads Account</p>
+          <template x-if="effectiveAdsAccountId">
+            <span class="ml-auto text-xs text-green-500 font-medium">✓ Active</span>
+          </template>
+          <template x-if="!effectiveAdsAccountId">
+            <span class="ml-auto text-xs text-yellow-500 font-medium">Required</span>
+          </template>
+        </div>
+
+        <div>
+          <label class="text-xs text-muted-foreground mb-1.5 block">
+            Account ID
+            <span class="ml-1 opacity-60">— find it at
+              <a href="https://ads.x.com" target="_blank" rel="noreferrer" class="underline">ads.x.com</a>
+              → Account settings
+            </span>
+          </label>
+          <input
+            type="text"
+            x-model="manualAdsAccountId"
+            @input="onAdsAccountInput"
+            :placeholder="adsLoading ? 'Detecting…' : (autoAccount ? autoAccount.id : 'e.g. abc123def')"
+            class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary transition-colors bg-transparent"
+          />
+        </div>
+
+        <!-- Auto-detected accounts -->
+        <template x-if="!adsLoading && adsAccounts.length > 0">
+          <div>
+            <p class="text-xs text-muted-foreground mb-1.5">Detected accounts</p>
+            <div class="flex flex-wrap gap-2">
+              <template x-for="acc in adsAccounts" :key="acc.id">
+                <button
+                  @click="selectAdsAccount(acc.id)"
+                  :class="manualAdsAccountId === acc.id || (!manualAdsAccountId && autoAccount && autoAccount.id === acc.id)
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border bg-muted/40 text-muted-foreground hover:text-foreground'"
+                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors"
+                >
+                  <span class="font-mono" x-text="acc.id"></span>
+                  <span class="opacity-70" x-show="acc.name" x-text="'· ' + acc.name"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="adsError">
+          <p class="text-xs text-red-400">Could not load accounts: <span x-text="adsError"></span>. You can still paste the ID manually.</p>
+        </template>
+      </div>
+
+      <!-- Load Card from Post -->
+      <div class="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm">
+        <h2 class="section-title mb-4 flex items-center gap-2">
+          <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+          </svg>
+          Load Card from Post
+        </h2>
+
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs text-muted-foreground mb-1.5 block">X Post URL</label>
+            <input
+              type="url"
+              x-model="postUrl"
+              placeholder="https://x.com/username/status/1234567890123456789"
+              class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
+              :class="postError ? 'border-red-500/70' : ''"
+              @keyup.enter="validatePost()"
+            />
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button
+              @click="validatePost()"
+              :disabled="!effectiveAdsAccountId || validatingPost"
+              class="btn-primary disabled:opacity-50 flex items-center gap-2"
+            >
+              <span x-show="!validatingPost">Validate Post &amp; Load Card</span>
+              <span x-show="validatingPost" class="spinner w-4 h-4 border-[1.5px]"></span>
+              <span x-show="validatingPost">Validating…</span>
+            </button>
+
+            <button
+              x-show="loadedCard"
+              @click="resetCard()"
+              type="button"
+              class="btn-outline text-xs"
+            >
+              Clear
+            </button>
+          </div>
+
+          <template x-if="postError">
+            <div class="flex items-start gap-2 text-xs px-3 py-2 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20">
+              <svg class="w-3.5 h-3.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              </svg>
+              <span x-text="postError"></span>
+            </div>
+          </template>
+
+          <p class="text-[11px] text-muted-foreground">
+            The post must contain a <span class="font-medium">website card</span> or <span class="font-medium">app card</span>.
+            We check for <span class="font-mono">card_uri</span> via the X API v2.
+          </p>
+        </div>
+      </div>
+
+      <!-- Current Card (shown only after successful load) -->
+      <template x-if="loadedCard">
+        <div class="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="section-title flex items-center gap-2">
+              <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              Current Card (uneditable)
+            </h2>
+            <span class="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground" x-text="loadedCard.card_type ? loadedCard.card_type.toUpperCase() : 'CARD'"></span>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div class="rounded-xl border border-border bg-background p-3">
+              <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Title</div>
+              <div class="font-medium break-words" x-text="loadedCard.title || '—'"></div>
+            </div>
+            <div class="rounded-xl border border-border bg-background p-3">
+              <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Media ID</div>
+              <div class="font-mono text-xs break-all" x-text="loadedCard.media_id || '—'"></div>
+              <template x-if="loadedCard.original_media_width && loadedCard.original_media_height">
+                <div class="text-[10px] text-muted-foreground mt-0.5" x-text="loadedCard.original_media_width + ' × ' + loadedCard.original_media_height"></div>
+              </template>
+              <template x-if="loadedCard.original_media_type">
+                <div class="text-[10px] mt-0.5">
+                  <span class="text-muted-foreground">Type:</span>
+                  <span class="font-medium" x-text="loadedCard.original_media_type"></span>
+                </div>
+              </template>
+            </div>
+            <div class="md:col-span-2 rounded-xl border border-border bg-background p-3">
+              <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Destination URL</div>
+              <div class="font-mono text-xs break-all text-primary" x-text="loadedCard.url || '—'"></div>
+            </div>
+          </div>
+
+          <div class="text-[11px] text-muted-foreground">
+            These values are read from the live card. You can schedule new values below.
+          </div>
+        </div>
+      </template>
+
+      <!-- Schedule Update Form -->
+      <template x-if="loadedCard">
+        <div class="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm space-y-4" id="schedule-form">
+          <h2 class="section-title flex items-center gap-2">
+            <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+            </svg>
+            Schedule Update
+          </h2>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- New Title -->
+            <div>
+              <label class="text-xs text-muted-foreground mb-1.5 block">New Title</label>
+              <input
+                type="text"
+                x-model="newTitle"
+                maxlength="70"
+                class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+              />
+              <div class="text-[10px] text-muted-foreground mt-0.5 text-right" x-text="(70 - (newTitle||'').length) + ' / 70'"></div>
+            </div>
+
+            <!-- New Media ID -->
+            <div>
+              <label class="text-xs text-muted-foreground mb-1.5 block">New Media ID</label>
+              <input
+                type="text"
+                x-model="newMediaId"
+                @blur="checkMediaDimensions()"
+                @input="mediaDimError = null"
+                placeholder="e.g. 3_1234567890123456789"
+                class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+                :class="mediaDimError ? 'border-red-500/70' : ''"
+              />
+              <template x-if="loadedCard && loadedCard.original_media_type">
+                <div class="mt-1 text-[10px] text-muted-foreground">
+                  Must be <span class="font-medium" x-text="loadedCard.original_media_type"></span> (same type + identical dimensions as original).
+                </div>
+              </template>
+              <template x-if="mediaDimError">
+                <div class="mt-1.5 text-xs text-red-400 flex items-start gap-1.5">
+                  <svg class="w-3.5 h-3.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                  <span x-text="mediaDimError"></span>
+                </div>
+              </template>
+              <template x-if="mediaDimLoading">
+                <div class="mt-1 text-[10px] text-muted-foreground flex items-center gap-1.5">
+                  <span class="spinner w-3 h-3 border"></span> Checking media…
+                </div>
+              </template>
+              <template x-if="!mediaDimError && mediaDimResult && newMediaId">
+                <div class="mt-1 text-[10px] text-green-400" x-text="'OK: ' + (mediaDimResult.new.media_type || '') + ' ' + (mediaDimResult.new.width || '?') + ' × ' + (mediaDimResult.new.height || '?')"></div>
+              </template>
+            </div>
+
+            <!-- New URL -->
+            <div class="md:col-span-2">
+              <label class="text-xs text-muted-foreground mb-1.5 block">New Destination URL</label>
+              <input
+                type="url"
+                x-model="newUrl"
+                @blur="validateNewUrl()"
+                @input="urlError = null"
+                placeholder="https://example.com/landing-page"
+                class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+                :class="urlError ? 'border-red-500/70' : ''"
+              />
+              <template x-if="urlError">
+                <div class="mt-1.5 text-xs text-red-400 flex items-start gap-1.5">
+                  <svg class="w-3.5 h-3.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                  <span x-text="urlError"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Schedule Time -->
+          <div>
+            <label class="text-xs text-muted-foreground mb-1.5 block">Scheduled time (must be in the future)</label>
+            <div class="flex flex-wrap items-center gap-2 mb-2">
+              <button type="button" @click="setQuickTime(1)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">+1 hour</button>
+              <button type="button" @click="setQuickTime(4)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">+4 hours</button>
+              <button type="button" @click="setQuickTime(24)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">Tomorrow 9am</button>
+              <button type="button" @click="setQuickTime(48)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">In 2 days</button>
+            </div>
+            <input
+              type="datetime-local"
+              x-model="scheduledAtLocal"
+              class="w-full md:w-80 px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary"
+            />
+          </div>
+
+          <div>
+            <button
+              @click="saveSchedule()"
+              :disabled="saving || !!mediaDimError || !!urlError || !newTitle || !newMediaId || !newUrl || !scheduledAtLocal"
+              class="btn-primary px-6 py-2.5 disabled:opacity-50 flex items-center gap-2"
+            >
+              <span x-show="!saving">Save Schedule</span>
+              <span x-show="saving" class="spinner w-4 h-4 border-[1.5px]"></span>
+              <span x-show="saving">Saving…</span>
+            </button>
+            <span class="ml-3 text-xs text-muted-foreground">The update will be applied via the Ads API at the scheduled time.</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- Schedules list -->
+      <div id="schedules" class="pt-2">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="section-title">Your Scheduled Updates</h2>
+          <button @click="loadSchedules()" class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.058 11H1M12 3v2m0 16v2m9-9H15m-6 0a8 8 0 01-.938-1.5"/></svg>
+            Refresh
+          </button>
+        </div>
+
+        <div class="bg-card rounded-2xl border border-border overflow-hidden">
+          <template x-if="schedules.length === 0">
+            <div class="p-8 text-center text-sm text-muted-foreground">
+              No schedules yet. Load a card above and create your first scheduled update.
+            </div>
+          </template>
+
+          <template x-if="schedules.length > 0">
+            <div class="divide-y divide-border text-sm">
+              <template x-for="s in schedules" :key="s.id">
+                <div class="p-4 flex flex-col md:flex-row md:items-start gap-3">
+                  <div class="flex-1 space-y-1">
+                    <div class="flex items-center gap-2">
+                      <span class="font-mono text-xs px-1.5 py-0.5 bg-muted rounded" x-text="s.ads_account_id"></span>
+                      <span class="font-mono text-xs text-muted-foreground">card:</span>
+                      <span class="font-mono text-xs" x-text="s.card_id"></span>
+                      <span class="text-[10px] px-1.5 py-px rounded" :class="{
+                        'bg-yellow-500/10 text-yellow-400': s.status === 'pending',
+                        'bg-blue-500/10 text-blue-400': s.status === 'running',
+                        'bg-green-500/10 text-green-400': s.status === 'completed',
+                        'bg-red-500/10 text-red-400': s.status === 'failed',
+                        'bg-zinc-500/10 text-zinc-400': s.status === 'cancelled'
+                      }" x-text="s.status"></span>
+                    </div>
+
+                    <div class="text-xs text-muted-foreground">
+                      <span>Scheduled: </span>
+                      <span class="text-foreground" x-text="new Date(s.scheduled_at * 1000).toLocaleString()"></span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-0.5 pt-1 text-xs">
+                      <div><span class="text-muted-foreground">Title:</span> <span x-text="s.new_title"></span></div>
+                      <div>
+                        <span class="text-muted-foreground">Media:</span> <span class="font-mono break-all" x-text="s.new_media_id"></span>
+                        <template x-if="s.original_media_type || s.new_media_type">
+                          <span class="text-[10px] text-muted-foreground ml-1" x-text="'(' + (s.original_media_type || '?') + ' → ' + (s.new_media_type || '?') + ')'"></span>
+                        </template>
+                      </div>
+                      <div class="sm:col-span-3"><span class="text-muted-foreground">URL:</span> <span class="font-mono text-primary break-all" x-text="s.new_url"></span></div>
+                    </div>
+
+                    <template x-if="s.result && (s.status === 'failed' || s.status === 'completed')">
+                      <div class="text-[10px] text-muted-foreground pt-1 font-mono break-all" x-text="s.result"></div>
+                    </template>
+                  </div>
+
+                  <div class="flex md:flex-col gap-2 shrink-0">
+                    <template x-if="s.status === 'pending'">
+                      <button @click="cancelSchedule(s.id)" class="btn-danger text-xs">Cancel</button>
+                    </template>
+                    <button @click="forceExecute(s.id)" class="btn-outline text-xs">Run now</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+        <p class="text-[10px] text-muted-foreground mt-2">The background scheduler checks every ~20s. “Run now” is for testing only.</p>
+      </div>
+
+      <!-- Toasts (visible, inside the main alpine root) -->
+      <div class="fixed bottom-4 right-4 z-[70] space-y-2 pointer-events-none">
+        <template x-for="t in toasts" :key="t.id">
+          <div :class="t.isError ? 'bg-red-600' : 'bg-zinc-800 border border-border'" class="pointer-events-auto text-white text-sm px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3 max-w-[320px]">
+            <span x-text="t.msg"></span>
+          </div>
+        </template>
+      </div>
+
+    </div>
+  </main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // User banner (nav)
+  function userBanner() {
+    return {
+      user: null,
+      loading: true,
+      async init() {
+        await this.loadUser();
+      },
+      async loadUser() {
+        this.loading = true;
+        try {
+          const r = await fetch('/api/me');
+          const j = await r.json();
+          this.user = j.user || null;
+          // also push to the main scheduler component if present
+          const main = document.querySelector('[x-data="cardScheduler()"]');
+          if (main && main.__x && this.user) {
+            main.__x.$data.user = this.user;
+          }
+        } catch (e) {}
+        this.loading = false;
+      }
+    }
+  }
+
+  // Main scheduler Alpine component
+  function cardScheduler() {
+    return {
+      // auth
+      user: null,
+      loadingUser: true,
+
+      // ads account
+      manualAdsAccountId: '',
+      adsAccounts: [],
+      adsLoading: false,
+      adsError: null,
+      autoAccount: null,
+
+      // post + card
+      postUrl: '',
+      validatingPost: false,
+      postError: null,
+      loadedCard: null,           // now also includes original_media_type ('image' | 'video') + dimensions from server
+
+      // schedule form
+      newTitle: '',
+      newMediaId: '',
+      newUrl: '',
+      scheduledAtLocal: '',       // for <input type=datetime-local>
+      saving: false,
+
+      // live validation state
+      mediaDimLoading: false,
+      mediaDimError: null,
+      mediaDimResult: null,
+      urlError: null,
+
+      // schedules list
+      schedules: [],
+
+      // toasts
+      toasts: [],
+
+      get effectiveAdsAccountId() {
+        return (this.manualAdsAccountId || (this.autoAccount && this.autoAccount.id) || '').trim();
+      },
+
+      async init() {
+        await this.loadUser();
+        if (this.user) {
+          await this.loadAdsAccounts();
+          await this.loadSchedules();
+          // poll schedules occasionally
+          setInterval(() => this.loadSchedules(), 30000);
+        }
+      },
+
+      async loadUser() {
+        this.loadingUser = true;
+        try {
+          const r = await fetch('/api/me');
+          const j = await r.json();
+          this.user = j.user || null;
+        } catch (e) {
+          this.user = null;
+        }
+        this.loadingUser = false;
+      },
+
+      async loadAdsAccounts() {
+        this.adsLoading = true;
+        this.adsError = null;
+        try {
+          const r = await fetch('/api/ads-accounts');
+          const j = await r.json();
+          this.adsAccounts = j.accounts || [];
+          if (this.adsAccounts.length > 0 && !this.manualAdsAccountId) {
+            this.autoAccount = this.adsAccounts[0];
+          }
+          if (j.error) this.adsError = j.error;
+        } catch (e) {
+          this.adsError = 'Failed to load accounts';
+        }
+        this.adsLoading = false;
+      },
+
+      onAdsAccountInput() {
+        // when user types, clear the "auto" highlight
+        if (this.autoAccount && this.manualAdsAccountId && this.manualAdsAccountId !== this.autoAccount.id) {
+          // keep it, user is overriding
+        }
+      },
+
+      selectAdsAccount(id) {
+        this.manualAdsAccountId = id;
+        this.autoAccount = this.adsAccounts.find(a => a.id === id) || null;
+        // if we already have a loaded card, we may want to re-validate or just let user re-validate
+      },
+
+      // ---------- Post validation (the gate) ----------
+      async validatePost() {
+        this.postError = null;
+        if (!this.effectiveAdsAccountId) {
+          this.postError = 'Please enter or select an Ads Account ID first.';
+          return;
+        }
+        if (!this.postUrl.trim()) {
+          this.postError = 'Please paste an X post URL.';
+          return;
+        }
+
+        this.validatingPost = true;
+        try {
+          const r = await fetch('/api/validate-post', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              post_url: this.postUrl.trim(),
+              ads_account_id: this.effectiveAdsAccountId
+            })
+          });
+          const j = await r.json();
+          if (!r.ok) {
+            this.postError = j.detail || 'Validation failed.';
+            this.loadedCard = null;
+            return;
+          }
+          // success
+          this.loadedCard = j.card;
+          // prefill the form with current values
+          this.newTitle = this.loadedCard.title || '';
+          this.newMediaId = this.loadedCard.media_id || '';
+          this.newUrl = this.loadedCard.url || '';
+          this.mediaDimError = null;
+          this.mediaDimResult = null;
+          this.urlError = null;
+
+          // default schedule time = now + 2 hours
+          this.setQuickTime(2);
+
+          this.showToast('Card loaded. You can now schedule an update.');
+        } catch (e) {
+          this.postError = 'Network error while validating the post.';
+        } finally {
+          this.validatingPost = false;
+        }
+      },
+
+      resetCard() {
+        this.loadedCard = null;
+        this.postUrl = '';
+        this.postError = null;
+        this.newTitle = '';
+        this.newMediaId = '';
+        this.newUrl = '';
+        this.scheduledAtLocal = '';
+        this.mediaDimError = null;
+        this.mediaDimResult = null;
+        this.urlError = null;
+      },
+
+      // ---------- Media dimension check ----------
+      async checkMediaDimensions() {
+        this.mediaDimError = null;
+        this.mediaDimResult = null;
+        if (!this.effectiveAdsAccountId || !this.newMediaId || !this.loadedCard) return;
+
+        // if same as original, auto-allow (preserve type too)
+        if (this.newMediaId === (this.loadedCard.media_id || '')) {
+          const t = this.loadedCard.original_media_type || null;
+          this.mediaDimResult = {
+            match: true,
+            type_match: true,
+            original: { width: this.loadedCard.original_media_width, height: this.loadedCard.original_media_height, media_type: t },
+            new: { width: this.loadedCard.original_media_width, height: this.loadedCard.original_media_height, media_type: t }
+          };
+          return;
+        }
+
+        this.mediaDimLoading = true;
+        try {
+          const r = await fetch('/api/check-media', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ads_account_id: this.effectiveAdsAccountId,
+              original_media_id: this.loadedCard.media_id,
+              new_media_id: this.newMediaId
+            })
+          });
+          const j = await r.json();
+          if (!j.match) {
+            this.mediaDimError = j.error || 'Media must match original dimensions and type (image/video).';
+          } else {
+            this.mediaDimResult = j;
+          }
+        } catch (e) {
+          this.mediaDimError = 'Could not verify media dimensions (network).';
+        } finally {
+          this.mediaDimLoading = false;
+        }
+      },
+
+      async validateNewUrl() {
+        this.urlError = null;
+        const u = (this.newUrl || '').trim();
+        if (!u) return;
+        try {
+          const r = await fetch('/api/validate-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: u })
+          });
+          const j = await r.json();
+          if (!j.valid) this.urlError = j.error || 'Invalid URL.';
+        } catch (e) {
+          // non-fatal
+        }
+      },
+
+      // ---------- Scheduling helpers ----------
+      setQuickTime(hoursOrDays) {
+        const d = new Date();
+        if (hoursOrDays === 24) {
+          // tomorrow at 09:00 local
+          d.setDate(d.getDate() + 1);
+          d.setHours(9, 0, 0, 0);
+        } else if (hoursOrDays === 48) {
+          d.setDate(d.getDate() + 2);
+          d.setHours(9, 0, 0, 0);
+        } else {
+          d.setHours(d.getHours() + hoursOrDays);
+        }
+        // format for datetime-local: YYYY-MM-DDTHH:MM
+        const pad = n => String(n).padStart(2, '0');
+        const val = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        this.scheduledAtLocal = val;
+      },
+
+      epochFromLocal(localStr) {
+        if (!localStr) return 0;
+        // datetime-local is local time, convert to epoch seconds
+        const dt = new Date(localStr);
+        return Math.floor(dt.getTime() / 1000);
+      },
+
+      async saveSchedule() {
+        if (!this.loadedCard || !this.effectiveAdsAccountId) return;
+        if (this.mediaDimError || this.urlError) return;
+
+        const scheduledEpoch = this.epochFromLocal(this.scheduledAtLocal);
+        if (!scheduledEpoch || scheduledEpoch <= (Date.now()/1000 + 30)) {
+          this.showToast('Please choose a time at least 1 minute in the future.', true);
+          return;
+        }
+
+        this.saving = true;
+        try {
+          const payload = {
+            ads_account_id: this.effectiveAdsAccountId,
+            card_id: this.loadedCard.id,
+            card_type: this.loadedCard.card_type,
+            original_title: this.loadedCard.title || '',
+            original_media_id: this.loadedCard.media_id || '',
+            original_url: this.loadedCard.url || '',
+            original_media_width: this.loadedCard.original_media_width,
+            original_media_height: this.loadedCard.original_media_height,
+            original_media_type: this.loadedCard.original_media_type || null,
+            new_title: this.newTitle.trim(),
+            new_media_id: this.newMediaId.trim(),
+            new_url: this.newUrl.trim(),
+            new_media_type: (this.mediaDimResult && this.mediaDimResult.new && this.mediaDimResult.new.media_type) || this.loadedCard.original_media_type || null,
+            scheduled_at: scheduledEpoch
+          };
+
+          const r = await fetch('/api/schedules', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const j = await r.json();
+          if (!r.ok) {
+            this.showToast(j.detail || 'Failed to save schedule.', true);
+            return;
+          }
+          this.showToast('Schedule saved. It will run at the chosen time.');
+          await this.loadSchedules();
+          // keep the form but bump the time a bit for convenience
+          this.setQuickTime(2);
+        } catch (e) {
+          this.showToast('Network error while saving schedule.', true);
+        } finally {
+          this.saving = false;
+        }
+      },
+
+      async loadSchedules() {
+        try {
+          const r = await fetch('/api/schedules');
+          const j = await r.json();
+          this.schedules = j.schedules || [];
+        } catch (e) {}
+      },
+
+      async cancelSchedule(id) {
+        try {
+          await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
+          await this.loadSchedules();
+          this.showToast('Schedule cancelled.');
+        } catch (e) {
+          this.showToast('Failed to cancel.', true);
+        }
+      },
+
+      async forceExecute(id) {
+        if (!confirm('Run this update immediately? (for testing)')) return;
+        try {
+          const r = await fetch(`/api/schedules/${id}/execute`, { method: 'POST' });
+          if (r.ok) {
+            this.showToast('Execution started. Check status in a moment.');
+            setTimeout(() => this.loadSchedules(), 1200);
+          } else {
+            const j = await r.json().catch(() => ({}));
+            this.showToast(j.detail || 'Execution failed to start.', true);
+          }
+        } catch (e) {
+          this.showToast('Network error on manual execute.', true);
+        }
+      },
+
+      // ---------- UI helpers ----------
+      showToast(msg, isError = false) {
+        const id = Date.now();
+        this.toasts.push({ id, msg, isError });
+        setTimeout(() => {
+          this.toasts = this.toasts.filter(t => t.id !== id);
+        }, 4200);
+      }
+    }
+  }
+
+  // Global toast container (simple, no extra deps)
+  // We mount a small fixed toast region via a second tiny alpine root at the end of body
+</script>
+
+<!-- Toast region -->
+<div x-data="{ toasts: [] }" x-init="window.addEventListener('cardx-toast', e => { const t = {id: Date.now(), msg: e.detail.msg, isError: e.detail.isError}; toasts.push(t); setTimeout(()=> toasts = toasts.filter(x=>x.id!==t.id), 4200); })" class="fixed bottom-4 right-4 z-[60] space-y-2">
+  <template x-for="t in toasts" :key="t.id">
+    <div :class="t.isError ? 'bg-red-600' : 'bg-zinc-800 border border-border'" class="text-white text-sm px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3 max-w-[320px]">
+      <span x-text="t.msg"></span>
+    </div>
+  </template>
+</div>
+{% endblock %}
