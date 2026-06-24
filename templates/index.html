@@ -17,56 +17,80 @@
         <a href="#schedules" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Schedules</a>
       </div>
 
-      <div x-data="userBanner()" x-init="init()" class="flex items-center gap-3">
-        <template x-if="user">
-          <div class="flex items-center gap-2.5">
-            <img x-show="user.profile_image_url" :src="user.profile_image_url" class="w-7 h-7 rounded-full border border-border" />
-            <span class="text-sm font-medium hidden sm:block" x-text="'@' + user.username"></span>
-            <form method="post" action="/logout" class="inline">
-              <button type="submit" class="text-xs text-muted-foreground hover:text-foreground px-2.5 py-1 rounded-lg hover:bg-muted transition-colors">Sign out</button>
-            </form>
-          </div>
-        </template>
+      <div x-data="userBanner({{ (user | tojson) if user else 'null' }})" x-init="init()" x-ignore class="flex items-center gap-3">
+        {% if user %}
+        <div class="flex items-center gap-2 text-sm">
+          <span class="text-muted-foreground">Signed in as</span>
+          <strong>@{{ user.username }}</strong>
+          <a href="/logout" class="text-xs text-primary hover:underline px-2 py-0.5">Sign out</a>
+        </div>
+        {% else %}
         <template x-if="!user && !loading">
           <a href="/login" class="btn-primary text-xs py-1.5 px-4">Sign in with X</a>
         </template>
+        {% endif %}
       </div>
     </div>
   </nav>
 
   <main class="max-w-4xl mx-auto px-4 py-8" id="update">
     <!-- Signed-out hero -->
+    {# 
+      Make the hero visible by default when the server knows there is no logged-in user.
+      This prevents a completely blank page when Alpine's async loadUser() hasn't run yet
+      or when there are any client-side timing/JS issues.
+      When server *does* have a user (cookie present), we still apply the x-show so Alpine can hide it
+      after confirming with /api/me.
+    #}
     <div x-data="{ 
-          user: null, 
-          loading: true, 
+          user: {{ (user | tojson) if user else 'null' }}, 
+          loading: {{ 'false' if user else 'true' }}, 
           oauthError: null,
           requiredCallback: '{{ x_redirect_uri }}'
         }" 
         x-init="
-          loadUser();
-          // Show any error returned by the OAuth callback (e.g. from X when redirect_uri is wrong)
+          if (!user) { loadUser(); }
           const params = new URLSearchParams(window.location.search);
           const err = params.get('error');
           if (err) {
             oauthError = decodeURIComponent(err).replace(/\+/g, ' ');
-            // Clean the URL so refresh doesn't keep showing it
             history.replaceState({}, '', '/');
           }
         " 
-        x-show="!user && !loading" 
+        {% if user %}x-show="!user && !loading"{% endif %}
         class="max-w-xl mx-auto text-center py-16">
 
-      <!-- Prominent error box when the OAuth roundtrip failed (common cause: redirect_uri not registered or mismatched) -->
+      <!-- Prominent error box when the OAuth roundtrip failed -->
       <template x-if="oauthError">
-        <div class="mb-8 rounded-2xl border border-red-500/40 bg-red-500/10 text-left p-4 text-sm">
-          <div class="font-semibold text-red-400 mb-1">X sign-in did not complete</div>
-          <div class="text-red-300 mb-3" x-text="oauthError"></div>
+        <div class="mb-8 rounded-2xl border border-border bg-card text-left p-4 text-sm">
+          <div class="font-semibold mb-1">X sign-in did not complete</div>
+          <div class="text-muted-foreground mb-3" x-text="oauthError"></div>
           <div class="text-xs text-muted-foreground space-y-1">
-            <p><strong>Most common fix:</strong> In your X App at <a href="https://developer.x.com" target="_blank" class="underline">developer.x.com</a>, go to the App → User authentication settings → OAuth 2.0, and add <span class="font-mono text-foreground">exactly</span> this Callback URI:</p>
+            <p><strong>Most common fix for "To use this App you have to be logged in to X.":</strong></p>
+            <ul class="list-disc pl-4 space-y-0.5">
+              <li>Use the <strong>exact same X account</strong> to log in that you used to create the App/Project at developer.x.com.</li>
+              <li>In the portal: Project → your App → User authentication settings → make sure OAuth 1.0a is enabled (and OAuth 2.0 if you still use the legacy path).</li>
+              <li>Add/register <span class="font-mono text-foreground">exactly</span> this Callback URI (copy it):</li>
+            </ul>
             <p class="font-mono bg-black/40 px-2 py-1 rounded break-all" x-text="requiredCallback"></p>
-            <p>Then set the <span class="font-mono">X_REDIRECT_URI</span> in your <span class="font-mono">.env</span> to the same value and restart the server.</p>
-            <p class="pt-1">Also make sure the X Project/App has the Ads API enabled and that you are using <span class="font-mono">127.0.0.1</span> (not <span class="font-mono">localhost</span>) for local testing.</p>
+            <p>Then set the same value in <span class="font-mono">.env</span> as <span class="font-mono">X_REDIRECT_URI</span> and restart the server.</p>
+            <p class="pt-1">Also ensure the Project/App has the Ads API enabled. For local use <span class="font-mono">127.0.0.1</span> (not <span class="font-mono">localhost</span>).</p>
           </div>
+
+          <template x-if="oauthError && oauthError.includes('profile_fetch')">
+            <div class="mt-3 pt-3 border-t border-red-500/30 text-[11px] text-red-300">
+              <strong>Profile fetch failed after OAuth1 login.</strong><br>
+              This usually means the signed request to <span class="font-mono">verify_credentials</span> was rejected.<br>
+              Double-check:
+              <ul class="list-disc pl-4 mt-1 space-y-0.5">
+                <li>OAuth 1.0a is <strong>enabled</strong> for the App (separate from OAuth 2.0).</li>
+                <li>The exact <span class="font-mono">Callback URL</span> is registered in the <strong>OAuth 1.0a</strong> settings section.</li>
+                <li>You copied the <strong>Consumer Keys</strong> (API Key + Secret), not the OAuth 2.0 Client ID/Secret.</li>
+                <li>App permissions are set to "Read and write".</li>
+                <li>After any change in developer.x.com, wait 30s, fully restart the server, hard-refresh, and try again.</li>
+              </ul>
+            </div>
+          </template>
         </div>
       </template>
 
@@ -77,21 +101,31 @@
       <h1 class="text-4xl font-bold tracking-tighter mb-3">Dynamic Media Card Tool</h1>
       <p class="text-muted-foreground mb-6">Update X website cards and app cards on a schedule.<br>Click below to sign in — this tool supports <span class="font-medium">X sign-in only</span>.</p>
 
+      <!-- Pre-flight warning (neutral style) -->
+      <div class="mb-4 mx-auto max-w-md rounded-xl border border-border bg-card p-3 text-xs text-left">
+        <div class="font-semibold mb-1">Before you click “Sign in with X”:</div>
+        <div class="text-muted-foreground">
+          Open x.com in this same browser and log in (or switch accounts) to the exact X account that owns the post that you would like to change the media
+        </div>
+      </div>
+
       <a href="/login" class="btn-primary inline-flex items-center gap-3 px-8 py-3 text-base">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
         Sign in with X
       </a>
 
-      <div class="mt-6 text-[11px] text-muted-foreground max-w-md mx-auto">
-        Before clicking, make sure this exact Callback URI is registered in your X App's OAuth 2.0 settings:<br>
-        <span class="font-mono text-foreground break-all" x-text="requiredCallback || 'http://127.0.0.1:8000/callback'"></span>
-      </div>
-
       <p class="mt-3 text-xs text-muted-foreground">Requires an X account that has access to X Ads.</p>
     </div>
 
-    <!-- Main app (only when signed in) -->
-    <div x-data="cardScheduler()" x-init="init()" x-show="user" x-cloak class="space-y-6 pb-20">
+    <!-- Main app (the logged-in experience) -->
+    {# 
+      When the server already knows the user (from the session cookie), show this container immediately.
+      This avoids the "completely blank between header and footer" problem while the client-side
+      cardScheduler.loadUser() async fetch completes.
+      When the server has no user, we keep the x-show so it stays hidden until the client confirms a login.
+    #}
+    <div x-data="cardScheduler({{ (user | tojson) if user else 'null' }})" x-init="init()" x-ignore
+         {% if not user %}x-show="user"{% endif %} x-cloak class="space-y-6 pb-20">
 
       <!-- X Ads Account (exact visual match to reference) -->
       <div class="bg-card rounded-2xl border border-border p-4 shadow-sm space-y-3">
@@ -119,12 +153,23 @@
             </span>
           </label>
           <input
+            id="ads-account-input"
             type="text"
             x-model="manualAdsAccountId"
             @input="onAdsAccountInput"
             :placeholder="adsLoading ? 'Detecting…' : (autoAccount ? autoAccount.id : 'e.g. abc123def')"
             class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary transition-colors bg-transparent"
           />
+          <div class="mt-1.5 flex items-center gap-2">
+            <button
+              type="button"
+              onclick="if (window.testAdsAccountAccess) window.testAdsAccountAccess(); else console.warn('testAdsAccountAccess not ready');"
+              style="border-radius:9999px; padding:6px 14px; font-size:12px; font-weight:600; display:inline-flex; align-items:center; gap:6px; background:#1d9bf0; color:#fff; border:none; cursor:pointer;"
+            >
+              Test Ads Account access
+            </button>
+            <span id="ads-account-test-result" style="font-size:11px;"></span>
+          </div>
         </div>
 
         <!-- Auto-detected accounts -->
@@ -159,105 +204,106 @@
           <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
           </svg>
-          Load Card from Post
+          Enter post link with website or app card
         </h2>
 
-        <div class="space-y-3">
-          <div>
-            <label class="text-xs text-muted-foreground mb-1.5 block">X Post URL</label>
-            <input
-              type="url"
-              x-model="postUrl"
-              placeholder="https://x.com/username/status/1234567890123456789"
-              class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
-              :class="postError ? 'border-red-500/70' : ''"
-              @keyup.enter="validatePost()"
-            />
-          </div>
+        <!-- Always-visible server-side signed-in indicator + logout (works even if Alpine user data is empty) -->
+        <div style="margin-bottom:8px; font-size:12px; color:#a1a1aa;">
+          {% if user %}
+          Signed in via X as <strong style="color:#fafafa;">@{{ user.username }}</strong>
+          <a href="/logout" style="margin-left:8px; color:#1d9bf0; font-size:11px; text-decoration:underline;">Sign out &amp; start over</a>
+          {% else %}
+          <span style="color:#facc15;">(no server user in this render)</span>
+          {% endif %}
+        </div>
 
-          <div class="flex items-center gap-3">
-            <button
-              @click="validatePost()"
-              :disabled="!effectiveAdsAccountId || validatingPost"
-              class="btn-primary disabled:opacity-50 flex items-center gap-2"
-            >
-              <span x-show="!validatingPost">Validate Post &amp; Load Card</span>
-              <span x-show="validatingPost" class="spinner w-4 h-4 border-[1.5px]"></span>
-              <span x-show="validatingPost">Validating…</span>
-            </button>
-
-            <button
-              x-show="loadedCard"
-              @click="resetCard()"
-              type="button"
-              class="btn-outline text-xs"
-            >
-              Clear
-            </button>
-          </div>
-
-          <template x-if="postError">
-            <div class="flex items-start gap-2 text-xs px-3 py-2 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20">
-              <svg class="w-3.5 h-3.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-              </svg>
-              <span x-text="postError"></span>
+        <div>
+          <div class="space-y-3">
+            <div>
+              <label class="text-xs text-muted-foreground mb-1.5 block">X Post URL</label>
+              <input
+                id="post-url-input"
+                type="url"
+                placeholder="https://x.com/username/status/1234567890123456789"
+                class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
+                onkeydown="if (event.key === 'Enter') { event.preventDefault(); if (window.doValidatePost) window.doValidatePost(); }"
+              />
+              <p class="mt-1 text-[10px] text-muted-foreground">Paste a link to a post that uses a website card or app card, then click the button or press Enter.</p>
             </div>
-          </template>
 
-          <p class="text-[11px] text-muted-foreground">
-            The post must contain a <span class="font-medium">website card</span> or <span class="font-medium">app card</span>.
-            We check for <span class="font-mono">card_uri</span> via the X API v2.
-          </p>
+            <div class="pt-1">
+              <button
+                type="button"
+                onclick="if (window.doValidatePost) window.doValidatePost(); else console.warn('doValidatePost not ready yet');"
+                style="border-radius:9999px; padding:10px 28px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:8px; background:#1d9bf0; color:#fff; min-width:240px; justify-content:center; border:none; cursor:pointer;"
+              >
+                Validate Post &amp; Load Card
+                <span id="validate-spinner" style="display:none; align-items:center; gap:6px; margin-left:4px;">
+                  <span class="spinner" style="width:14px;height:14px;border:1.5px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite;"></span>
+                </span>
+              </button>
+
+              <template x-if="!effectiveAdsAccountId">
+                <div style="margin-top:6px;font-size:10px;color:#facc15;">Set X Ads Account ID above first.</div>
+              </template>
+            </div>
+
+            <!-- Plain (non-Alpine) error box for validate feedback -->
+            <div id="validate-error-box" style="display:none; margin-top:6px; font-size:12px; padding:8px 10px; border-radius:8px; background:#450a0a; color:#fca5a5; border:1px solid #7f1d1d;"></div>
+          </div>
         </div>
       </div>
 
-      <!-- Current Card (shown only after successful load) -->
-      <template x-if="loadedCard">
-        <div class="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm space-y-4">
-          <div class="flex items-center justify-between">
-            <h2 class="section-title flex items-center gap-2">
-              <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              Current Card (uneditable)
-            </h2>
-            <span class="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground" x-text="loadedCard.card_type ? loadedCard.card_type.toUpperCase() : 'CARD'"></span>
-          </div>
+      <!-- Current Card (shown only after successful load) - plain div, shown by JS when validate succeeds -->
+      <div id="current-card-block" class="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm space-y-4" style="display:none">
+        <div class="flex items-center justify-between">
+          <h2 class="section-title flex items-center gap-2">
+            <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            Current Card (uneditable)
+          </h2>
+          <span id="cc-type" class="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground">CARD</span>
+        </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div class="rounded-xl border border-border bg-background p-3">
-              <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Title</div>
-              <div class="font-medium break-words" x-text="loadedCard.title || '—'"></div>
-            </div>
-            <div class="rounded-xl border border-border bg-background p-3">
-              <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Media ID</div>
-              <div class="font-mono text-xs break-all" x-text="loadedCard.media_id || '—'"></div>
-              <template x-if="loadedCard.original_media_width && loadedCard.original_media_height">
-                <div class="text-[10px] text-muted-foreground mt-0.5" x-text="loadedCard.original_media_width + ' × ' + loadedCard.original_media_height"></div>
-              </template>
-              <template x-if="loadedCard.original_media_type">
-                <div class="text-[10px] mt-0.5">
-                  <span class="text-muted-foreground">Type:</span>
-                  <span class="font-medium" x-text="loadedCard.original_media_type"></span>
-                </div>
-              </template>
-            </div>
-            <div class="md:col-span-2 rounded-xl border border-border bg-background p-3">
-              <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Destination URL</div>
-              <div class="font-mono text-xs break-all text-primary" x-text="loadedCard.url || '—'"></div>
+        <div class="text-[10px] text-muted-foreground mb-1">Card ID (from post):</div>
+        <div id="cc-id" class="font-mono text-xs break-all bg-background border border-border rounded px-2 py-1 mb-3">—</div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div class="rounded-xl border border-border bg-background p-3">
+            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Title</div>
+            <div id="cc-title" class="font-medium break-words">—</div>
+          </div>
+          <div class="rounded-xl border border-border bg-background p-3">
+            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Media Key</div>
+            <div id="cc-media" class="font-mono text-xs break-all">—</div>
+            <div id="cc-dim" class="text-[10px] text-muted-foreground mt-0.5" style="display:none"></div>
+            <div class="text-[10px] mt-0.5" style="display:none">
+              <span class="text-muted-foreground">Type:</span>
+              <span id="cc-mtype" class="font-medium"></span>
             </div>
           </div>
-
-          <div class="text-[11px] text-muted-foreground">
-            These values are read from the live card. You can schedule new values below.
+          <div class="md:col-span-2 rounded-xl border border-border bg-background p-3">
+            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Destination URL</div>
+            <div id="cc-url" class="font-mono text-xs break-all text-primary">—</div>
           </div>
         </div>
-      </template>
 
-      <!-- Schedule Update Form -->
-      <template x-if="loadedCard">
-        <div class="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm space-y-4" id="schedule-form">
+        <!-- Small preview image (from media_metadata url in the Ads card response) -->
+        <div id="cc-preview-wrap" style="display:none">
+          <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Media Preview</div>
+          <img id="cc-preview-img" style="max-width:100%; max-height:160px; border-radius:8px; border:1px solid #333; background:#111;" alt="media preview"/>
+        </div>
+
+        <div id="cc-note" class="text-[11px] text-amber-400" style="display:none"></div>
+
+        <div class="text-[11px] text-muted-foreground">
+          These values are read from the live card (or the post when Ads details are not available). You can schedule new values below.
+        </div>
+      </div>
+
+      <!-- Schedule Update Form (shown by JS after successful validate) -->
+      <div id="schedule-block" class="bg-card rounded-2xl border border-border p-4 sm:p-6 shadow-sm space-y-4" style="display:none">
           <h2 class="section-title flex items-center gap-2">
             <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z"/>
@@ -270,6 +316,7 @@
             <div>
               <label class="text-xs text-muted-foreground mb-1.5 block">New Title</label>
               <input
+                id="new-title-input"
                 type="text"
                 x-model="newTitle"
                 maxlength="70"
@@ -278,36 +325,48 @@
               <div class="text-[10px] text-muted-foreground mt-0.5 text-right" x-text="(70 - (newTitle||'').length) + ' / 70'"></div>
             </div>
 
-            <!-- New Media ID -->
+            <!-- New Media Key -->
             <div>
-              <label class="text-xs text-muted-foreground mb-1.5 block">New Media ID</label>
-              <input
-                type="text"
-                x-model="newMediaId"
-                @blur="checkMediaDimensions()"
-                @input="mediaDimError = null"
-                placeholder="e.g. 3_1234567890123456789"
-                class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary"
-                :class="mediaDimError ? 'border-red-500/70' : ''"
-              />
-              <template x-if="loadedCard && loadedCard.original_media_type">
-                <div class="mt-1 text-[10px] text-muted-foreground">
-                  Must be <span class="font-medium" x-text="loadedCard.original_media_type"></span> (same type + identical dimensions as original).
-                </div>
-              </template>
+              <label class="text-xs text-muted-foreground mb-1.5 block">New Media Key</label>
+              <div class="flex items-center gap-2">
+                <input
+                  id="new-media-input"
+                  type="text"
+                  x-model="newMediaId"
+                  @input="clearMediaValidation()"
+                  placeholder="e.g. 3_1234567890123456789"
+                  class="flex-1 px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+                  :class="mediaDimError ? 'border-red-500/70' : ''"
+                />
+                <button id="check-media-btn" type="button"
+                        onclick="if (window.doCheckNewMediaKey) { window.doCheckNewMediaKey(); } else { console.warn('[MEDIA-CHECK] doCheckNewMediaKey not ready yet'); }"
+                        class="px-2.5 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted active:bg-muted/70 text-muted-foreground"
+                        title="Fetch details for this media key">
+                  Check
+                </button>
+              </div>
+              <div class="mt-1 text-[10px] text-muted-foreground">
+                Click Check to load Media Type, Aspect ratio and Preview for this media key.
+              </div>
+              <!-- Always-present status area for the Check button (vanilla-driven for reliability) -->
+              <div id="media-check-status" class="mt-1 text-xs" style="min-height:1.25rem;"></div>
               <template x-if="mediaDimError">
                 <div class="mt-1.5 text-xs text-red-400 flex items-start gap-1.5">
                   <svg class="w-3.5 h-3.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
                   <span x-text="mediaDimError"></span>
                 </div>
               </template>
-              <template x-if="mediaDimLoading">
-                <div class="mt-1 text-[10px] text-muted-foreground flex items-center gap-1.5">
-                  <span class="spinner w-3 h-3 border"></span> Checking media…
+              <!-- Checked media details (shown after clicking Check; Alpine-driven when available) -->
+              <template x-if="!mediaDimError && mediaDimResult && mediaDimResult.new && newMediaId">
+                <div class="mt-1 flex items-start gap-2">
+                  <template x-if="mediaDimResult.new.preview">
+                    <img :src="mediaDimResult.new.preview" alt="media preview" style="width:28px; height:28px; object-fit:cover; border-radius:4px; border:1px solid #333; background:#111;" />
+                  </template>
+                  <div class="text-[10px] text-green-400 leading-tight">
+                    <div><span class="text-muted-foreground">Type:</span> <span x-text="mediaDimResult.new.media_type || '—'"></span></div>
+                    <div><span class="text-muted-foreground">Aspect ratio:</span> <span x-text="mediaDimResult.new.aspect_ratio || '—'"></span></div>
+                  </div>
                 </div>
-              </template>
-              <template x-if="!mediaDimError && mediaDimResult && newMediaId">
-                <div class="mt-1 text-[10px] text-green-400" x-text="'OK: ' + (mediaDimResult.new.media_type || '') + ' ' + (mediaDimResult.new.width || '?') + ' × ' + (mediaDimResult.new.height || '?')"></div>
               </template>
             </div>
 
@@ -315,6 +374,7 @@
             <div class="md:col-span-2">
               <label class="text-xs text-muted-foreground mb-1.5 block">New Destination URL</label>
               <input
+                id="new-url-input"
                 type="url"
                 x-model="newUrl"
                 @blur="validateNewUrl()"
@@ -335,45 +395,75 @@
           <!-- Schedule Time -->
           <div>
             <label class="text-xs text-muted-foreground mb-1.5 block">Scheduled time (must be in the future)</label>
-            <div class="flex flex-wrap items-center gap-2 mb-2">
-              <button type="button" @click="setQuickTime(1)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">+1 hour</button>
-              <button type="button" @click="setQuickTime(4)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">+4 hours</button>
-              <button type="button" @click="setQuickTime(24)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">Tomorrow 9am</button>
-              <button type="button" @click="setQuickTime(48)" class="text-xs px-2.5 py-1 rounded-lg border border-border hover:bg-muted text-muted-foreground">In 2 days</button>
+            <div class="flex flex-wrap items-end gap-2">
+              <div>
+                <div class="text-[10px] text-muted-foreground mb-0.5">Date</div>
+                <input
+                  id="schedule-date-input"
+                  type="date"
+                  class="px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary"
+                />
+              </div>
+              <div>
+                <div class="text-[10px] text-muted-foreground mb-0.5">Time (24-hour)</div>
+                <input
+                  id="schedule-time-part"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="5"
+                  placeholder="HH:MM"
+                  class="px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary font-mono"
+                  style="width: 7.5em;"
+                />
+              </div>
+              <!-- hidden combined value kept for compatibility with existing sync/epoch code -->
+              <input type="hidden" id="schedule-time-input" />
             </div>
-            <input
-              type="datetime-local"
-              x-model="scheduledAtLocal"
-              class="w-full md:w-80 px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary"
-            />
+
+            <div x-show="isScheduleTimeInPast()" class="mt-1 text-xs text-red-400">
+              Scheduled time must be in the future.
+            </div>
+
+            <div class="mt-2">
+              <label class="text-xs text-muted-foreground mb-1 block">Timezone</label>
+              <select
+                x-model="chosenUtcOffset"
+                @change="markTzManual()"
+                class="w-full md:w-80 px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary"
+              >
+                <!-- populated with GMT/UTC offsets only (no city names) -->
+              </select>
+            </div>
           </div>
 
           <div>
             <button
-              @click="saveSchedule()"
-              :disabled="saving || !!mediaDimError || !!urlError || !newTitle || !newMediaId || !newUrl || !scheduledAtLocal"
+              id="save-schedule-btn"
+              onclick="console.log('[SCHED-SAVE] onclick attr fired'); if (window.saveSchedule) window.saveSchedule(); else console.warn('[SCHED-SAVE] window.saveSchedule missing at click');"
+              :disabled="saving || isScheduleTimeInPast()"
               class="btn-primary px-6 py-2.5 disabled:opacity-50 flex items-center gap-2"
             >
-              <span x-show="!saving">Save Schedule</span>
+              <span>Save Schedule</span>
               <span x-show="saving" class="spinner w-4 h-4 border-[1.5px]"></span>
               <span x-show="saving">Saving…</span>
             </button>
-            <span class="ml-3 text-xs text-muted-foreground">The update will be applied via the Ads API at the scheduled time.</span>
+            <span class="ml-3 text-xs text-muted-foreground">The update will be applied at the scheduled time.</span>
+            <span id="save-sched-status" style="margin-left:8px; font-size:11px; color:#f87171;"></span>
           </div>
         </div>
-      </template>
+      </div>
 
       <!-- Schedules list -->
       <div id="schedules" class="pt-2">
         <div class="flex items-center justify-between mb-3">
           <h2 class="section-title">Your Scheduled Updates</h2>
-          <button @click="loadSchedules()" class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+          <button @click="loadSchedules()" onclick="if (window.refreshSchedulesList) window.refreshSchedulesList();" class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.058 11H1M12 3v2m0 16v2m9-9H15m-6 0a8 8 0 01-.938-1.5"/></svg>
             Refresh
           </button>
         </div>
 
-        <div class="bg-card rounded-2xl border border-border overflow-hidden">
+        <div class="bg-card rounded-2xl border border-border overflow-hidden" id="schedules-list-body">
           <template x-if="schedules.length === 0">
             <div class="p-8 text-center text-sm text-muted-foreground">
               No schedules yet. Load a card above and create your first scheduled update.
@@ -399,14 +489,34 @@
                     </div>
 
                     <div class="text-xs text-muted-foreground">
-                      <span>Scheduled: </span>
+                      <span>Scheduled (local time): </span>
                       <span class="text-foreground" x-text="new Date(s.scheduled_at * 1000).toLocaleString()"></span>
                     </div>
+                    <template x-if="s.executed_at">
+                      <div class="text-xs text-muted-foreground">
+                        <span>Executed: </span>
+                        <span class="text-foreground" x-text="new Date(s.executed_at * 1000).toLocaleString()"></span>
+                      </div>
+                    </template>
+
+                    <!-- Prominent "what will be changed" / "what was changed" summary -->
+                    <template x-if="s.changes && s.changes.length">
+                      <div class="text-[10px] pt-0.5">
+                        <span class="text-muted-foreground" x-text="s.status === 'pending' ? 'Will change:' : 'Changed:'"></span>
+                        <span class="text-foreground" x-text="s.changes.join('  •  ')"></span>
+                      </div>
+                    </template>
 
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-0.5 pt-1 text-xs">
                       <div><span class="text-muted-foreground">Title:</span> <span x-text="s.new_title"></span></div>
                       <div>
-                        <span class="text-muted-foreground">Media:</span> <span class="font-mono break-all" x-text="s.new_media_id"></span>
+                        <span class="text-muted-foreground">Media key:</span>
+                        <template x-if="s.original_media_id && s.new_media_id && s.original_media_id !== s.new_media_id">
+                          <span class="font-mono break-all" x-text="s.original_media_id + ' → ' + s.new_media_id"></span>
+                        </template>
+                        <template x-if="!(s.original_media_id && s.new_media_id && s.original_media_id !== s.new_media_id)">
+                          <span class="font-mono break-all" x-text="s.new_media_id"></span>
+                        </template>
                         <template x-if="s.original_media_type || s.new_media_type">
                           <span class="text-[10px] text-muted-foreground ml-1" x-text="'(' + (s.original_media_type || '?') + ' → ' + (s.new_media_type || '?') + ')'"></span>
                         </template>
@@ -414,8 +524,25 @@
                       <div class="sm:col-span-3"><span class="text-muted-foreground">URL:</span> <span class="font-mono text-primary break-all" x-text="s.new_url"></span></div>
                     </div>
 
+                    <!-- Old vs New media previews (only when media key actually changed) -->
+                    <template x-if="s.original_media_id && s.new_media_id && s.original_media_id !== s.new_media_id && (s.original_preview || s.new_preview)">
+                      <div class="pt-1 flex items-center gap-2 text-[10px]">
+                        <span class="text-muted-foreground shrink-0">Media previews:</span>
+                        <div class="flex items-center gap-1.5">
+                          <template x-if="s.original_preview">
+                            <img :src="s.original_preview" alt="original media" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />
+                          </template>
+                          <span class="text-muted-foreground">→</span>
+                          <template x-if="s.new_preview">
+                            <img :src="s.new_preview" alt="new media" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+
                     <template x-if="s.result && (s.status === 'failed' || s.status === 'completed')">
-                      <div class="text-[10px] text-muted-foreground pt-1 font-mono break-all" x-text="s.result"></div>
+                      <div class="text-[10px] pt-1 break-all" :class="s.status === 'failed' ? 'text-red-400 font-mono' : 'text-muted-foreground'" 
+                           x-html="window.formatScheduleResultHtml ? window.formatScheduleResultHtml(s.result, s.status === 'failed') : s.result"></div>
                     </template>
                   </div>
 
@@ -433,14 +560,7 @@
         <p class="text-[10px] text-muted-foreground mt-2">The background scheduler checks every ~20s. “Run now” is for testing only.</p>
       </div>
 
-      <!-- Toasts (visible, inside the main alpine root) -->
-      <div class="fixed bottom-4 right-4 z-[70] space-y-2 pointer-events-none">
-        <template x-for="t in toasts" :key="t.id">
-          <div :class="t.isError ? 'bg-red-600' : 'bg-zinc-800 border border-border'" class="pointer-events-auto text-white text-sm px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3 max-w-[320px]">
-            <span x-text="t.msg"></span>
-          </div>
-        </template>
-      </div>
+      <!-- Toasts are rendered by the global toast region at end of body (fed by showToast + direct dispatches) -->
 
     </div>
   </main>
@@ -448,13 +568,1041 @@
 
 {% block scripts %}
 <script>
-  // User banner (nav)
-  function userBanner() {
+  // === SCHEDULE TIME HELPERS (date + 24h time inputs, combined "YYYY-MM-DDTHH:mm" for logic) ===
+  // Timezone dropdown shows only GMT/UTC offsets (no cities). We store a numeric offset in hours.
+
+  function getScheduledLocalCombined() {
+    var de = document.getElementById('schedule-date-input');
+    var te = document.getElementById('schedule-time-part');
+    var he = document.getElementById('schedule-time-input');
+    if (de && de.value) {
+      // Compute a normalized value for *logic/epoch* only.
+      // Do NOT overwrite the visible time input here — that was preventing typing 2-digit hours/minutes.
+      var tv = (te && te.value) ? normalizeHhMm(te.value) : '00:00';
+      var comb = de.value + 'T' + tv;
+      if (he) he.value = comb;
+      return comb;
+    }
+    return (he && he.value) ? he.value : '';
+  }
+
+  function setScheduledLocalCombined(comb) {
+    if (!comb) return;
+    var parts = comb.split('T');
+    var ds = parts[0] || '';
+    var ts = parts[1] || '00:00';
+    var de = document.getElementById('schedule-date-input');
+    var te = document.getElementById('schedule-time-part');
+    var he = document.getElementById('schedule-time-input');
+    if (de) de.value = ds;
+    if (te) te.value = ts;
+    if (he) he.value = comb;
+    try {
+      var root = document.querySelector('[x-data^="cardScheduler"]');
+      if (root && root.__x && root.__x.$data) root.__x.$data.scheduledAtLocal = comb;
+    } catch (e) {}
+  }
+
+  // No more "Pick time" button - user relies on native calendar icon on date and will type HH:MM for time.
+
+  // Compute a default "local" wall time string (+1h from now) expressed in the given UTC offset.
+  // The returned YYYY-MM-DDTHH:mm numbers are what the user sees; epochFromLocal will convert using the offset.
+  function computeDefaultScheduledLocal(offHours) {
+    const off = Number(offHours) || 0;
+    const offMin = Math.round(off * 60);
+    const target = Date.now() + 60 * 60 * 1000;
+    // wall numbers = components of (target_instant + offset)
+    const wallMs = target + offMin * 60000;
+    const wall = new Date(wallMs);
+    const pad = n => String(n).padStart(2, '0');
+    return `${wall.getUTCFullYear()}-${pad(wall.getUTCMonth()+1)}-${pad(wall.getUTCDate())}T${pad(wall.getUTCHours())}:${pad(wall.getUTCMinutes())}`;
+  }
+
+  function populateTimezones() {
+    // Pure offset-based timezone choices (user request: no continents, cities, or IANA names).
+    // Covers common offsets used worldwide.
+    var sel = document.querySelector('select[x-model="chosenUtcOffset"]');
+    if (!sel) return;
+
+    var prev = sel.value || '';
+    sel.innerHTML = '';
+
+    // Whole-hour offsets from -12 to +14 (covers the world). Add a few common half-hour ones.
+    var offsets = [];
+    for (var i = -12; i <= 14; i++) offsets.push(i);
+    // Common :30 offsets
+    [-9.5, -3.5, 3.5, 4.5, 5.5, 5.75, 9.5, 12.75].forEach(function(h){ offsets.push(h); });
+    // Sort numerically
+    offsets.sort(function(a,b){ return a-b; });
+
+    offsets.forEach(function(off) {
+      var o = document.createElement('option');
+      o.value = String(off);
+      var sign = off > 0 ? '+' : '';
+      var label = 'GMT/UTC' + sign + off;
+      // For .5/.75 show nicely e.g. GMT/UTC+5.5
+      o.textContent = label;
+      sel.appendChild(o);
+    });
+
+    if (prev !== '' && offsets.some(function(v){ return String(v) === prev; })) {
+      sel.value = prev;
+    } else if (!sel.value && sel.options.length > 0) {
+      // Try to adopt from Alpine state (number or string)
+      var adopted = null;
+      try {
+        var r = document.querySelector('[x-data^="cardScheduler"]');
+        if (r && r.__x && r.__x.$data && r.__x.$data.chosenUtcOffset != null) {
+          adopted = String(r.__x.$data.chosenUtcOffset);
+        }
+      } catch (e) {}
+      if (adopted && offsets.some(function(v){ return String(v) === adopted; })) {
+        sel.value = adopted;
+      } else {
+        sel.value = '0';
+      }
+    }
+  }
+
+  function normalizeHhMm(v) {
+    if (!v) return '';
+    // Final normalization: full HH:MM padded + clamped. Use on blur/save only.
+    var s = String(v).toUpperCase().replace(/[^0-9:]/g, '');
+    if (s.indexOf(':') === -1 && /^\d{3,4}$/.test(s)) {
+      if (s.length === 3) s = '0' + s;
+      s = s.slice(0,2) + ':' + s.slice(2);
+    }
+    var m = s.match(/^(\d{1,2}):?(\d{0,2})$/);
+    if (!m) return s.slice(0,5);
+    var hh = Math.max(0, Math.min(23, parseInt(m[1] || '0', 10)));
+    var mm = Math.max(0, Math.min(59, parseInt((m[2] || '00').slice(0,2) || '0', 10)));
+    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+  }
+
+  // Light live formatter for the time input while the user is typing.
+  // Lets you type 2 digits for hour and 2 for minute without the value being clobbered.
+  // Only inserts the colon at the right spot; no zero-padding or clamping until blur/save.
+  function liveFormatTime(v) {
+    var s = String(v || '').replace(/[^0-9]/g, '');
+    if (s.length > 4) s = s.slice(0, 4);
+    if (s.length >= 3) {
+      return s.slice(0, 2) + ':' + s.slice(2);
+    }
+    return s;
+  }
+
+  // === MEDIA CHECK HELPERS (robust even if Alpine bindings are delayed) ===
+  window.forceCheckMedia = function forceCheckMedia() {
+    console.log('[MEDIA-CHECK] forceCheckMedia invoked (delegating to doCheckNewMediaKey)');
+    try { __forceInitOurRoots(); } catch (e) {}
+    if (window.doCheckNewMediaKey) {
+      window.doCheckNewMediaKey();
+      return;
+    }
+    // Very old fallback to Alpine method name
+    var root = document.querySelector('[x-data^="cardScheduler"]');
+    var data = root && root.__x && root.__x.$data;
+    if (data && typeof data.checkMediaDimensions === 'function') {
+      try { data.checkMediaDimensions(); return; } catch (e) { console.error('[MEDIA-CHECK] error', e); }
+    }
+    setTimeout(function() {
+      if (window.doCheckNewMediaKey) window.doCheckNewMediaKey();
+    }, 60);
+  };
+
+  // === Robust standalone "Check" for New Media Key (no Alpine dependency for the action) ===
+  window.doCheckNewMediaKey = async function doCheckNewMediaKey() {
+    var statusEl = document.getElementById('media-check-status');
+    var btn = document.getElementById('check-media-btn');
+    var input = document.getElementById('new-media-input');
+    var accInput = document.getElementById('ads-account-input');
+
+    function setStatus(html, isErr) {
+      if (statusEl) {
+        statusEl.innerHTML = html || '';
+        statusEl.style.color = isErr ? '#f87171' : '';
+      }
+      if (btn) btn.disabled = false;
+    }
+
+    if (btn) btn.disabled = true;
+
+    var mediaKey = input ? (input.value || '').trim() : '';
+    var adsId = accInput ? (accInput.value || '').trim() : (window.__lastAdsAccountId || '');
+
+    // Try to set Alpine loading state if possible (for its own x-if)
+    var alpineData = null;
+    try {
+      var r = document.querySelector('[x-data^="cardScheduler"]');
+      if (r && r.__x && r.__x.$data) {
+        alpineData = r.__x.$data;
+        alpineData.mediaDimLoading = true;
+        alpineData.mediaDimError = null;
+        alpineData.mediaDimResult = null;
+      }
+    } catch (e) {}
+
+    if (!adsId) {
+      // try Alpine as last resort
+      try {
+        if (alpineData && alpineData.effectiveAdsAccountId) adsId = alpineData.effectiveAdsAccountId || '';
+        else if (r && r.__x && r.__x.$data) adsId = r.__x.$data.effectiveAdsAccountId || '';
+      } catch (e) {}
+    }
+
+    console.log('[MEDIA-CHECK] doCheckNewMediaKey', { mediaKey: mediaKey, adsId: adsId });
+
+    if (!mediaKey) {
+      setStatus('Enter a media key first.', true);
+      if (alpineData) alpineData.mediaDimLoading = false;
+      return;
+    }
+    if (!adsId) {
+      setStatus('Ads Account ID is required to look up the media.', true);
+      if (btn) btn.disabled = false;
+      if (alpineData) alpineData.mediaDimLoading = false;
+      return;
+    }
+
+    setStatus('<span class="spinner" style="width:12px;height:12px;border:1.5px solid rgba(255,255,255,.3); border-top-color:#aaa; border-radius:50%; animation:spin .7s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></span> Loading media info…');
+
+    try {
+      const resp = await fetch('/api/media-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ads_account_id: adsId, media_id: mediaKey })
+      });
+      const j = await resp.json().catch(() => ({}));
+      console.log('[MEDIA-CHECK] /api/media-info response', resp.status, j);
+
+      if (!resp.ok || j.ok === false) {
+        setStatus(j.error || 'Failed to load media details.', true);
+        if (alpineData) { alpineData.mediaDimLoading = false; alpineData.mediaDimError = (j.error || 'Failed to load media details.'); }
+        return;
+      }
+
+      // Build nice display
+      var html = '';
+      if (j.preview) {
+        html += '<img src="' + j.preview + '" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;vertical-align:middle;margin-right:6px;" />';
+      }
+      html += '<span style="vertical-align:middle;">';
+      html += '<strong>Type:</strong> ' + (j.media_type || '—') + ' &nbsp; ';
+      html += '<strong>Aspect ratio:</strong> ' + (j.aspect_ratio || '—');
+      html += '</span>';
+
+      setStatus(html, false);
+
+      // Feed Alpine so the x-if result block lights up
+      var fedAlpine = false;
+      try {
+        if (alpineData) {
+          alpineData.mediaDimResult = { new: {
+            media_type: j.media_type,
+            width: j.width,
+            height: j.height,
+            aspect_ratio: j.aspect_ratio,
+            preview: j.preview
+          } };
+          alpineData.mediaDimError = null;
+          alpineData.newMediaId = mediaKey;
+          alpineData.mediaDimLoading = false;
+          fedAlpine = true;
+        } else {
+          var root2 = document.querySelector('[x-data^="cardScheduler"]');
+          if (root2 && root2.__x && root2.__x.$data) {
+            root2.__x.$data.mediaDimResult = { new: { media_type: j.media_type, width: j.width, height: j.height, aspect_ratio: j.aspect_ratio, preview: j.preview } };
+            root2.__x.$data.mediaDimError = null;
+            root2.__x.$data.newMediaId = mediaKey;
+            root2.__x.$data.mediaDimLoading = false;
+            fedAlpine = true;
+          }
+        }
+      } catch (e) { /* non-fatal */ }
+
+      // Clear the direct status once Alpine result can take over (keeps UI clean)
+      if (fedAlpine) {
+        try { var stc = document.getElementById('media-check-status'); if (stc) stc.innerHTML = ''; } catch(e){}
+      }
+
+    } catch (err) {
+      console.error('[MEDIA-CHECK] network error', err);
+      setStatus('Network error while loading media info.', true);
+      if (alpineData) { alpineData.mediaDimLoading = false; alpineData.mediaDimError = 'Network error while loading media info.'; }
+    } finally {
+      if (btn) btn.disabled = false;
+      if (alpineData) alpineData.mediaDimLoading = false;
+    }
+  };
+
+  // Ensure spin animation exists for our loading indicators
+  (function ensureSpinKeyframes(){
+    if (document.getElementById('spin-kf')) return;
+    var st = document.createElement('style');
+    st.id = 'spin-kf';
+    st.textContent = '@keyframes spin { to { transform: rotate(360deg); } } .spinner { animation: spin .7s linear infinite; }';
+    document.head.appendChild(st);
+  })();
+
+  // Attach Check button handler (vanilla, as reliable as possible)
+  function wireCheckMediaButton() {
+    var b = document.getElementById('check-media-btn');
+    if (!b || b.__checkWired) return;
+    b.__checkWired = true;
+    b.addEventListener('click', function(ev){
+      ev.preventDefault();
+      if (window.doCheckNewMediaKey) {
+        window.doCheckNewMediaKey();
+      } else {
+        console.warn('[MEDIA-CHECK] doCheckNewMediaKey not available');
+      }
+    });
+    // Also keep supporting direct calls
+    console.log('[MEDIA-CHECK] Check button wired');
+  }
+  // Wire early and repeatedly (handles late reveal of the form)
+  setTimeout(wireCheckMediaButton, 0);
+  setTimeout(wireCheckMediaButton, 120);
+  setTimeout(wireCheckMediaButton, 400);
+  document.addEventListener('click', function(ev){
+    // If user clicks the button before our timeout wires, catch it
+    if (ev.target && ev.target.id === 'check-media-btn') {
+      // the addEventListener above will handle if already wired; this is belt
+    }
+  }, true);
+
+  window.updateSaveButtonState = function updateSaveButtonState() {
+    var btn = document.getElementById('save-schedule-btn');
+    if (!btn) return;
+    var disabled = false;
+    try {
+      var root = document.querySelector('[x-data^="cardScheduler"]');
+      var data = root && root.__x && root.__x.$data;
+      if (data) {
+        var past = !!(data.isScheduleTimeInPast && data.isScheduleTimeInPast());
+        if (data.saving || past) disabled = true;
+      } else {
+        // crude fallback: require a non-empty media key value in the input
+        var mi = document.getElementById('new-media-input');
+        if (!mi || !(mi.value || '').trim()) disabled = true;
+      }
+    } catch (e) {}
+    btn.disabled = disabled;
+  };
+
+  // Standalone save that does not rely on Alpine data object.
+  // Used as last resort when __x is missing on the root.
+  window.__standaloneSaveFromDom = function __standaloneSaveFromDom() {
+    // No separate guard here: the caller (window.saveSchedule) already set the in-flight flag.
+    // A fresh top-level call to saveSchedule would have been blocked before reaching fallback.
+    console.log('[SCHED-SAVE] entering standalone fallback');
+    var statusEl = document.getElementById('save-sched-status');
+
+    function setStatus(msg, isErr) {
+      if (statusEl) statusEl.textContent = msg || '';
+      if (msg) {
+        try {
+          window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Save Schedule: ' + msg, isError: !!isErr } }));
+        } catch (e) {}
+      }
+    }
+
+    // Read current inputs
+    var dateEl = document.getElementById('schedule-date-input');
+    var timeEl = document.getElementById('schedule-time-part');
+    var accEl  = document.getElementById('ads-account-input');
+
+    var dateStr = dateEl ? dateEl.value : '';
+    var timeStr = timeEl ? normalizeHhMm(timeEl.value) : '';
+    var adsId   = accEl ? (accEl.value || '').trim() : (window.__lastAdsAccountId || '');
+
+    var comb = dateStr && timeStr ? (dateStr + 'T' + timeStr) : '';
+    console.log('[SCHED-SAVE][standalone] comb, adsId:', comb, adsId);
+
+    // Card info: prefer stashed, fall back to visible Current Card DOM bits
+    var card = window.__lastLoadedCard || null;
+    if (!card) {
+      // Try to reconstruct minimal from the visible "Current Card" section
+      var ccIdEl = document.getElementById('cc-id');
+      var id = ccIdEl ? (ccIdEl.textContent || '').trim() : '';
+      if (id && id !== '—') {
+        card = {
+          id: id,
+          card_id: id,
+          title: (document.getElementById('cc-title') || {}).textContent || '',
+          url: (document.getElementById('cc-url') || {}).textContent || '',
+          media_id: (document.getElementById('cc-media') || {}).textContent || '',
+          card_type: ((document.getElementById('cc-type') || {}).textContent || 'website').toLowerCase(),
+          original_media_width: null,
+          original_media_height: null,
+          original_media_type: null
+        };
+      }
+    }
+
+    if (!card || !card.id) {
+      setStatus('No card loaded. Validate a post first.', true);
+      return;
+    }
+    if (!adsId) {
+      setStatus('Ads Account ID required.', true);
+      return;
+    }
+
+    // Compute epoch using the offset select (or default 0)
+    var offSel = document.querySelector('select[x-model="chosenUtcOffset"]');
+    var off = offSel && offSel.value !== '' ? Number(offSel.value) : 0;
+
+    // Build a localStr for the epochFromLocal logic, but since we are standalone we duplicate the math here.
+    // epoch = wall-in-offset - offset  (in seconds)
+    var scheduledEpoch = 0;
+    if (comb) {
+      try {
+        var [ds, ts] = comb.split('T');
+        var [y, mo, d] = ds.split('-').map(Number);
+        var [h, m] = (ts || '00:00').split(':').map(Number);
+        var offMin = Math.round((off || 0) * 60);
+        var wallUtcMs = Date.UTC(y, (mo||1)-1, d||1, h||0, m||0, 0, 0);
+        scheduledEpoch = Math.floor( (wallUtcMs - offMin * 60000) / 1000 );
+      } catch (e) {
+        console.error('[SCHED-SAVE][standalone] epoch calc error', e);
+      }
+    }
+    var nowSec = Date.now() / 1000;
+    console.log('[SCHED-SAVE][standalone] epoch=', scheduledEpoch, 'nowSec=', nowSec, 'isFuture?', scheduledEpoch > nowSec);
+
+    if (!scheduledEpoch || scheduledEpoch <= nowSec) {
+      setStatus('Scheduled time must be in the future.', true);
+      return;
+    }
+
+    // New Media Key check is informational only. We only require a non-empty value here.
+    var enteredNewMid = (document.getElementById('new-media-input') || {}).value || '';
+    if (!(enteredNewMid || '').trim()) {
+      setStatus('New Media Key is required.', true);
+      return;
+    }
+
+    // Build payload (minimal fields the backend expects)
+    var payload = {
+      ads_account_id: adsId,
+      card_id: card.id || card.card_id,
+      card_type: card.card_type || 'website',
+      original_title: card.title || '',
+      original_media_id: card.media_id || '',
+      original_url: card.url || '',
+      original_media_width: card.original_media_width || null,
+      original_media_height: card.original_media_height || null,
+      original_media_type: card.original_media_type || null,
+      original_aspect_ratio: card.original_aspect_ratio || null,
+      new_title: (document.getElementById('new-title-input') || {}).value || '',
+      new_media_id: (document.getElementById('new-media-input') || {}).value || '',
+      new_url: (document.getElementById('new-url-input') || {}).value || '',
+      new_media_type: null,  // server will fetch authoritative type for the provided new_media_id
+      scheduled_at: scheduledEpoch,
+      original_post_url: (window.__lastPostUrl || '')
+    };
+
+    console.log('[SCHED-SAVE][standalone] new vs orig at save', {
+      new_media_id: payload.new_media_id,
+      original_media_id: payload.original_media_id,
+      new_media_type: payload.new_media_type
+    });
+    console.log('[SCHED-SAVE][standalone] posting payload', payload);
+    setStatus('Saving…');
+
+    fetch('/api/schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(j){
+        console.log('[SCHED-SAVE][standalone] response', r.status, j);
+        if (!r.ok) {
+          setStatus(j.detail || 'Failed to save.', true);
+          return;
+        }
+        setStatus('');
+        try {
+          window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Schedule saved. It will run at the chosen time.' } }));
+        } catch (e) {}
+        // Always try a robust refresh (will use the live component if possible, or force + set)
+        try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch (e) {}
+        // Belt: also directly render via vanilla right now so first-save list appears even if Alpine attach is delayed
+        fetch('/api/schedules').then(function(r){ return r.json().catch(function(){return {schedules:[]};}); }).then(function(jj){
+          try { renderSchedulesVanilla(jj.schedules || []); } catch(e){}
+        }).catch(function(){});
+      });
+    }).catch(function(e){
+      console.error('[SCHED-SAVE][standalone] network error', e);
+      setStatus('Network error saving schedule.', true);
+    });
+  };
+
+  function wireScheduleTimeSync() {
+    ['schedule-date-input', 'schedule-time-part'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (!el || el.__wiredSched) return;
+      el.__wiredSched = true;
+      var handler = function() {
+        if (id === 'schedule-time-part') {
+          // Use light live formatter while typing so you can enter two digits for hour and minute.
+          var live = liveFormatTime(el.value);
+          if (live !== el.value) {
+            var pos = el.selectionStart || 0;
+            var oldLen = el.value ? el.value.length : 0;
+            el.value = live;
+            // Put cursor roughly after the char just typed
+            var newPos = Math.min(live.length, pos + (live.length > oldLen ? 1 : 0));
+            try { el.setSelectionRange(newPos, newPos); } catch (e) {}
+          }
+        }
+        var comb = getScheduledLocalCombined();
+        var root = document.querySelector('[x-data^="cardScheduler"]');
+        if (root && root.__x && root.__x.$data) root.__x.$data.scheduledAtLocal = comb;
+      };
+      el.addEventListener('input', handler);
+      el.addEventListener('change', handler);
+      el.addEventListener('blur', function(){
+        if (id === 'schedule-time-part') el.value = normalizeHhMm(el.value);
+      });
+    });
+  }
+
+  // initial population + wiring (in case activate hasn't run yet)
+  try { populateTimezones(); } catch (e) {}
+  try { wireScheduleTimeSync(); } catch (e) {}
+
+  // === STANDALONE ADS ACCOUNT ACCESS TEST ===
+  // Exactly the verification call you asked for: GET /accounts/:account_id
+  window.testAdsAccountAccess = async function testAdsAccountAccess() {
+    var input = document.getElementById('ads-account-input');
+    var resultEl = document.getElementById('ads-account-test-result');
+
+    // Fallback: if result span is missing for some reason, try to append a small status next to the button
+    if (!resultEl) {
+      var btn = document.querySelector('button[onclick*="testAdsAccountAccess"]');
+      if (btn && btn.parentNode) {
+        resultEl = document.createElement('span');
+        resultEl.style.fontSize = '11px';
+        resultEl.style.marginLeft = '8px';
+        btn.parentNode.appendChild(resultEl);
+      }
+    }
+    if (!input || !resultEl) {
+      console.warn('[testAdsAccountAccess] required elements not found');
+      return;
+    }
+
+    var id = (input.value || '').trim();
+    if (!id) {
+      resultEl.style.color = '#facc15';
+      resultEl.textContent = 'Enter an Account ID first';
+      return;
+    }
+
+    resultEl.style.color = '#a1a1aa';
+    resultEl.textContent = 'Testing ' + id + ' …';
+
+    try {
+      var r = await fetch('/api/check-ads-account/' + encodeURIComponent(id));
+      var j = await r.json().catch(function(){ return {}; });
+      if (j && j.ok) {
+        resultEl.style.color = '#4ade80';
+        resultEl.textContent = 'Access OK';
+      } else {
+        resultEl.style.color = '#f87171';
+        var status = (j && (j.status || j.detail)) || r.status || 'error';
+        resultEl.textContent = '✗ ' + status + ' — no access. See console or /api/check-ads-account/' + encodeURIComponent(id);
+      }
+    } catch (e) {
+      resultEl.style.color = '#f87171';
+      resultEl.textContent = 'Network error while testing account';
+      console.error(e);
+    }
+  };
+
+  // === STANDALONE SAVE SCHEDULE (bypass Alpine click issues for reliability) ===
+  // In-flight guard to prevent rapid double-invocation from any residual wiring
+  window.__saveInFlight = false;
+  window.saveSchedule = function saveSchedule() {
+    if (window.__saveInFlight) { console.log('[SCHED-SAVE] ignored: already in flight'); return; }
+    window.__saveInFlight = true;
+    setTimeout(function(){ window.__saveInFlight = false; }, 1200);
+    console.log('[SCHED-SAVE] global window.saveSchedule invoked');
+    var st0 = document.getElementById('save-sched-status'); if (st0) st0.textContent = '';
+    var root = document.querySelector('[x-data^="cardScheduler"]');
+    console.log('[SCHED-SAVE] root query:', !!root);
+
+    // Retry a few times (first-save timing) before giving the red "not ready" toast.
+    // Many inits happen async after the schedule block is revealed.
+    function waitForAlpineData(attempt, maxAttempts, onReady, onFail) {
+      root = document.querySelector('[x-data^="cardScheduler"]');
+      if (root && root.__x && root.__x.$data) {
+        onReady(root.__x.$data);
+        return;
+      }
+      if (attempt < maxAttempts) {
+        try { __forceInitOurRoots(); } catch (e) {}
+        try {
+          if (root && window.Alpine && typeof Alpine.initTree === 'function') Alpine.initTree(root);
+        } catch (e) {}
+        setTimeout(function(){ waitForAlpineData(attempt+1, maxAttempts, onReady, onFail); }, 70);
+      } else {
+        onFail();
+      }
+    }
+
+    if (!root || !root.__x || !root.__x.$data) {
+      console.warn('[SCHED-SAVE] Alpine root not ready, will retry init briefly before fallback');
+      waitForAlpineData(0, 7, function(data){
+        // proceed with the normal Alpine path using the fresh data ref
+        proceedWithData(data);
+      }, function(){
+        // Expected on the very first Save after Validate (Alpine attach can lag).
+        // Fall back silently to the standalone saver (it will show its own success/error toasts).
+        console.warn('[SCHED-SAVE] Alpine data not ready after short wait — using standalone save path (no red toast).');
+        var fb = window.__standaloneSaveFromDom;
+        if (fb) { fb(); }
+      });
+      return;  // the waitFor will call the continuation or fallback
+    }
+
+    var data = root.__x ? root.__x.$data : null;
+    if (!data) {
+      console.warn('[SCHED-SAVE] data became null after lookup, falling back to standalone');
+      return (window.__standaloneSaveFromDom ? window.__standaloneSaveFromDom() : null);
+    }
+    proceedWithData(data);
+
+    function proceedWithData(data) {
+    console.log('[SCHED-SAVE] data object obtained, current keys sample:', {
+      hasLoadedCard: !!data.loadedCard,
+      effectiveAds: data.effectiveAdsAccountId,
+      scheduledAtLocal: data.scheduledAtLocal,
+      chosenUtcOffset: data.chosenUtcOffset
+    });
+
+    // Force sync the critical fields from DOM inputs (defensive)
+    try {
+      var comb = getScheduledLocalCombined();
+      console.log('[SCHED-SAVE] comb from DOM:', comb);
+      if (comb) data.scheduledAtLocal = comb;
+    } catch (e) { console.error('[SCHED-SAVE] comb sync error', e); }
+    try {
+      var nt = document.getElementById('new-title-input'); if (nt != null) data.newTitle = nt.value || '';
+      var nm = document.getElementById('new-media-input'); if (nm != null) data.newMediaId = (nm.value || '').trim();
+      var nu = document.getElementById('new-url-input'); if (nu != null) data.newUrl = nu.value || '';
+    } catch (e) {}
+    try {
+      var offSel = document.querySelector('select[x-model="chosenUtcOffset"]');
+      if (offSel && offSel.value !== '') {
+        data.chosenUtcOffset = Number(offSel.value);
+        console.log('[SCHED-SAVE] offset from select:', data.chosenUtcOffset);
+      }
+    } catch (e) {}
+
+    // First-save robustness: ensure ads account and loadedCard are in Alpine state even if bindings lagged
+    try {
+      var accEl = document.getElementById('ads-account-input');
+      var adsFromDom = (accEl && accEl.value ? accEl.value.trim() : '') || (window.__lastAdsAccountId || '');
+      if (adsFromDom && !data.manualAdsAccountId) {
+        data.manualAdsAccountId = adsFromDom;
+        console.log('[SCHED-SAVE] force-synced manualAdsAccountId from DOM/stash');
+      }
+    } catch (e) {}
+    if (!data.loadedCard && window.__lastLoadedCard) {
+      data.loadedCard = window.__lastLoadedCard;
+      console.log('[SCHED-SAVE] restored loadedCard from global stash for first-save');
+    }
+
+    if (typeof data.saveSchedule === 'function') {
+      console.log('[SCHED-SAVE] calling data.saveSchedule()');
+      var st2 = document.getElementById('save-sched-status'); if (st2) st2.textContent = '';
+      try {
+        data.saveSchedule();
+      } catch (e) {
+        console.error('[SCHED-SAVE] error inside data.saveSchedule', e);
+        var st3 = document.getElementById('save-sched-status'); if (st3) st3.textContent = 'Error, see console';
+      }
+    } else {
+      console.warn('[SCHED-SAVE] saveSchedule method missing on data');
+      var st4 = document.getElementById('save-sched-status'); if (st4) st4.textContent = 'Method missing';
+    }
+    } // end proceedWithData
+  }; // end window.saveSchedule
+
+  // === STANDALONE VALIDATE (completely bypasses Alpine for the critical "Validate Post" action) ===
+  // This is the reliable entry point for the button and Enter key.
+  window.doValidatePost = async function doValidatePost() {
+    var errBox = document.getElementById('validate-error-box');
+    if (errBox) {
+      errBox.style.display = 'none';
+      errBox.innerHTML = '';
+      // Make the box taller/wider for long API errors
+      errBox.style.maxHeight = '200px';
+      errBox.style.overflow = 'auto';
+      errBox.style.fontSize = '11px';
+      errBox.style.whiteSpace = 'pre-wrap';
+    }
+
+    var spinner = document.getElementById('validate-spinner');
+    if (spinner) spinner.style.display = 'inline-flex';
+
+    var accEl = document.getElementById('ads-account-input');
+    var urlEl = document.getElementById('post-url-input');
+
+    var accountId = accEl ? (accEl.value || '').trim() : '';
+    var pUrl = urlEl ? (urlEl.value || '').trim() : '';
+    // Stash the account used for this attempt so Save can fall back to it
+    try { window.__lastAdsAccountId = accountId; } catch (e) {}
+
+    // Clear transient validation messages (only progress ones)
+    function clearTransient() {
+      if (errBox) {
+        var t = errBox.textContent || '';
+        if (t.indexOf('Contacting') === 0 || t.indexOf('Validating') === 0 || t.indexOf('Tweet') === 0) {
+          errBox.textContent = '';
+          errBox.style.display = 'none';
+        }
+      }
+    }
+
+    if (!accountId) {
+      clearTransient();
+      if (errBox) { errBox.style.display = 'block'; errBox.textContent = 'Please enter or select an Ads Account ID first.'; }
+      if (spinner) spinner.style.display = 'none';
+      return;
+    }
+    if (!pUrl) {
+      clearTransient();
+      if (errBox) { errBox.style.display = 'block'; errBox.textContent = 'Please paste an X post URL.'; }
+      if (spinner) spinner.style.display = 'none';
+      return;
+    }
+
+    // Show spinner only during validation (no red progress text)
+    if (errBox) { errBox.style.display = 'none'; errBox.textContent = ''; }
+
+    try {
+      var r = await fetch('/api/validate-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_url: pUrl, ads_account_id: accountId })
+      });
+      var j = await r.json();
+      if (!r.ok) {
+        var detail = j.detail || 'Validation failed.';
+        if (errBox) {
+          errBox.style.display = 'block';
+          errBox.innerHTML = '';   // clear transient message
+          if (typeof detail === 'object' && detail !== null) {
+            var pre = document.createElement('pre');
+            pre.style.cssText = 'margin:0; white-space:pre-wrap; font-family: ui-monospace, monospace; font-size:10px;';
+            pre.textContent = JSON.stringify(detail, null, 2);
+            errBox.appendChild(pre);
+          } else {
+            errBox.textContent = String(detail);
+          }
+          // Keep raw for console only (no longer appended to visible UI)
+          console.log('[VALIDATE-POST] error response', j);
+          // Add actionable hint for the common 403 case
+          if (String(detail).includes('403') || String(detail).toLowerCase().includes('ads api error')) {
+            var hint = document.createElement('div');
+            hint.style.cssText = 'margin-top:8px; font-size:10px; color:#fda4af; border-top:1px solid #7f1d1d; padding-top:6px;';
+            hint.innerHTML = 'This 403 from the X Ads API usually means:<br>' +
+              '• The X user you signed in with does not have access to the Ads Account ID you typed (for this App), or<br>' +
+              '• The App in your X Developer Project does not have "Ads API" enabled/approved.<br>' +
+              'Next: after a fresh sign-in, open <b>http://127.0.0.1:8000/api/ads-accounts</b> in a tab and paste what it returns. Also copy the Account ID exactly from https://ads.x.com while logged in as the same @user.';
+            errBox.appendChild(hint);
+          }
+        }
+        // also try to surface in Alpine if it ever wakes up
+        var root = document.querySelector('[x-data^="cardScheduler"]');
+        if (root && root.__x && root.__x.$data) {
+          root.__x.$data.postError = (typeof detail === 'string' ? detail : 'Ads API error (see details above)');
+          root.__x.$data.loadedCard = null;
+        }
+        clearTransient();
+        return;
+      }
+
+      clearTransient();
+
+      // SUCCESS — show the card info and schedule form
+      var card = j.card || {};
+      // Stash globally so Save Schedule can work even if Alpine root is in a bad state later
+      try { window.__lastLoadedCard = card; } catch (e) {}
+      try { window.__lastPostUrl = pUrl || ''; } catch (e) {}
+
+      // Try to push into the Alpine component so the rest of the page (x-if, x-model, toasts, schedules) lights up
+      var root = document.querySelector('[x-data^="cardScheduler"]');
+      var data = null;
+        if (root && root.__x && root.__x.$data) {
+        data = root.__x.$data;
+        data.postError = null;
+        data.loadedCard = card;
+        data.newTitle = card.title || '';
+        data.newMediaId = card.media_id || '';
+        data.newUrl = card.url || '';
+        if (!data.postUrl) data.postUrl = pUrl || '';
+        data.mediaDimError = null;
+        data.mediaDimResult = null;
+        data.validatedMediaKey = null;
+        data.urlError = null;
+        try { window.__validatedNewMedia = null; } catch (e) {}
+
+        // Do not auto-populate media details here. User must click "Check" to retrieve
+        // Media Type / Aspect ratio / Preview for the New Media Key.
+
+        if (window.updateSaveButtonState) { try { window.updateSaveButtonState(); } catch(e){} }
+
+        // Ensure the ads account used for this validation is reflected in Alpine state
+        if (accountId && !data.manualAdsAccountId) {
+          data.manualAdsAccountId = accountId;
+        }
+        try { if (accountId) window.__lastAdsAccountId = accountId; } catch (e) {}
+
+        // No auto-kick of media check — details appear only when user clicks Check.
+
+        // Default the schedule time to ~1 hour from now (in chosen offset if known)
+        try {
+          const off = (data && data.chosenUtcOffset != null) ? Number(data.chosenUtcOffset) : 0;
+          const defVal = computeDefaultScheduledLocal(off);
+          data.scheduledAtLocal = defVal;
+          setScheduledLocalCombined(defVal);
+        } catch (_) {}
+
+        if (typeof data.showToast === 'function') data.showToast('Card loaded. You can now schedule an update.');
+      }
+
+      // Make the downstream sections visible (the old x-if blocks are now plain divs with display:none)
+      var cur = document.getElementById('current-card-block');
+      if (cur) cur.style.display = '';
+
+      var sched = document.getElementById('schedule-block');
+      if (sched) sched.style.display = '';
+
+      // Re-initialize offset dropdown + time sync + save button wiring now that block is visible
+      try { __forceInitOurRoots(); } catch (e) {}
+      try { populateTimezones(); } catch (e) {}
+      try { wireScheduleTimeSync(); } catch (e) {}
+
+      // Wire Check button directly (very defensively)
+      try {
+        wireCheckMediaButton();
+        var chk = document.getElementById('check-media-btn');
+        if (chk) {
+          // Overwrite to our robust standalone handler
+          chk.onclick = function(e){ e && e.preventDefault && e.preventDefault(); if (window.doCheckNewMediaKey) window.doCheckNewMediaKey(); };
+        }
+      } catch (e) {}
+
+      // Wire live updates for Save enable/disable + push media value to Alpine on direct input
+      try {
+        var mi = document.getElementById('new-media-input');
+        if (mi && !mi.__mediaWiredForSave) {
+          mi.__mediaWiredForSave = true;
+          var pushAndUpdate = function() {
+            try {
+              var r = document.querySelector('[x-data^="cardScheduler"]');
+              if (r && r.__x && r.__x.$data) {
+                r.__x.$data.newMediaId = (mi.value || '').trim();
+              }
+            } catch (e) {}
+            if (window.updateSaveButtonState) window.updateSaveButtonState();
+          };
+          mi.addEventListener('input', pushAndUpdate);
+          mi.addEventListener('blur', pushAndUpdate);
+          mi.addEventListener('change', pushAndUpdate);
+        }
+      } catch (e) {}
+
+      // Initial state for Save button now that form is live
+      setTimeout(function(){ try { if (window.updateSaveButtonState) window.updateSaveButtonState(); } catch(e){} }, 20);
+
+      // Prime the schedules list (will be empty until first save, but ensures container + later refreshes work)
+      setTimeout(function(){ try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch (e) {} }, 160);
+      // Note: Save button is wired only via its onclick + the guarded listener in wireStandaloneButtons.
+      // We intentionally do not add another listener here to avoid triple calls.
+
+      // Fill the Current Card display with real values (so user sees something immediately)
+      var setText = function(id, val) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = val || '—';
+      };
+      setText('cc-title', card.title);
+      setText('cc-media', card.media_id);
+      setText('cc-url', card.url);
+      setText('cc-id', card.id || card.card_id || '—');
+
+      var typeEl = document.getElementById('cc-type');
+      if (typeEl) typeEl.textContent = (card.card_type || 'card').toUpperCase();
+
+      var dimEl = document.getElementById('cc-dim');
+      if (dimEl && card.original_media_width && card.original_media_height) {
+        var aw = card.original_media_width, ah = card.original_media_height;
+        var dimText = aw + ' × ' + ah;
+        var ar = card.original_aspect_ratio;  // only use what server returned from API
+        if (ar) dimText += ' (' + ar + ')';
+        dimEl.textContent = dimText;
+        dimEl.style.display = '';
+      } else if (dimEl) {
+        dimEl.style.display = 'none';
+      }
+      var mtypeEl = document.getElementById('cc-mtype');
+      if (mtypeEl && card.original_media_type) {
+        mtypeEl.textContent = card.original_media_type;
+        mtypeEl.parentElement.style.display = '';
+      } else if (mtypeEl && mtypeEl.parentElement) {
+        mtypeEl.parentElement.style.display = 'none';
+      }
+
+      // Preview image from the card response (media_metadata url)
+      // For videos prefer video_poster_url or any poster image (not the video file itself)
+      var prevWrap = document.getElementById('cc-preview-wrap');
+      var prevImg = document.getElementById('cc-preview-img');
+      var previewSrc = card.media_preview;
+      // Build list of objects to inspect for poster urls (raw, raw_ads_card, top level etc)
+      var toInspect = [];
+      if (card) toInspect.push(card);
+      if (card && card.raw) toInspect.push(card.raw, (card.raw.data || null));
+      if (card && card.raw_ads_card) toInspect.push(card.raw_ads_card, (card.raw_ads_card.data || null));
+      // Always hunt posters for video, or to fix a bad preview
+      var isVideo = (card && (card.original_media_type === 'video' || card.inferred_media_type === 'video'));
+      if (isVideo || !previewSrc) {
+        for (var i=0; i<toInspect.length; i++) {
+          var obj = toInspect[i];
+          if (!obj || typeof obj !== 'object') continue;
+          for (var kk=0; kk<["video_poster_url","poster_url","poster_image_url","poster","thumbnail_url"].length; kk++) {
+            var k = ["video_poster_url","poster_url","poster_image_url","poster","thumbnail_url"][kk];
+            if (obj[k] && typeof obj[k]==='string') { previewSrc = obj[k]; break; }
+          }
+          if (previewSrc) break;
+          // dig components/media_metadata
+          if (Array.isArray(obj.components)) {
+            for (var ci=0; ci<obj.components.length; ci++) {
+              var c = obj.components[ci] || {};
+              var mm = c.media_metadata || {};
+              // direct on comp
+              for (var pk=0; pk<["video_poster_url","poster_url","poster","thumbnail_url"].length; pk++) {
+                var pkk = ["video_poster_url","poster_url","poster","thumbnail_url"][pk];
+                if (c[pkk]) { previewSrc = c[pkk]; break; }
+              }
+              if (previewSrc) break;
+              for (var mk in mm) {
+                var m = mm[mk] || {};
+                for (var pk2=0; pk2<["poster","poster_url","video_poster_url","thumbnail_url","preview_image"].length; pk2++) {
+                  var pkk2 = ["poster","poster_url","video_poster_url","thumbnail_url","preview_image"][pk2];
+                  if (m[pkk2]) { previewSrc = m[pkk2]; break; }
+                }
+                if (previewSrc) break;
+              }
+              if (previewSrc) break;
+            }
+          }
+          if (previewSrc) break;
+        }
+      }
+      if (previewSrc && prevImg && prevWrap) {
+        prevImg.src = previewSrc;
+        prevWrap.style.display = '';
+      } else if (prevWrap) {
+        prevWrap.style.display = 'none';
+      }
+
+      // Show any note from backend (e.g. when we couldn't read full details)
+      var noteEl = document.getElementById('cc-note');
+      if (noteEl) {
+        if (card.ads_fetch_note) {
+          noteEl.textContent = card.ads_fetch_note;
+          noteEl.style.display = '';
+        } else {
+          noteEl.style.display = 'none';
+        }
+      }
+
+      // Prefill schedule form inputs (vanilla)
+      var nt = document.getElementById('new-title-input');
+      if (nt) { nt.value = card.title || ''; try { nt.dispatchEvent(new Event('input', { bubbles: true })); } catch(e){} }
+      var nm = document.getElementById('new-media-input');
+      if (nm) { nm.value = card.media_id || ''; try { nm.dispatchEvent(new Event('input', { bubbles: true })); } catch(e){} }
+      var nu = document.getElementById('new-url-input');
+      if (nu) { nu.value = card.url || ''; try { nu.dispatchEvent(new Event('input', { bubbles: true })); } catch(e){} }
+
+      // No auto population of New Media details on Validate. User clicks "Check" to retrieve them.
+      if (window.updateSaveButtonState) { try { window.updateSaveButtonState(); } catch(e){} }
+
+      // (No extra kick to checkMediaDimensions — details are shown only on explicit Check click.)
+
+      // default time in the picker: +1h expressed as wall time in the chosen UTC offset (24h, no AM/PM)
+      try {
+        populateTimezones();
+        wireScheduleTimeSync();
+
+        let off = (data && data.chosenUtcOffset);
+        if (off == null || off === '') {
+          const sel = document.querySelector('select[x-model="chosenUtcOffset"]');
+          off = sel && sel.value !== '' ? Number(sel.value) : 0;
+        }
+        off = Number(off) || 0;
+
+        const defVal = computeDefaultScheduledLocal(off);
+        setScheduledLocalCombined(defVal);
+      } catch (_) {
+        // ultimate fallback: +1h expressed using the current chosen (or 0)
+        try {
+          const off = (data && data.chosenUtcOffset != null) ? Number(data.chosenUtcOffset) : 0;
+          const defVal = computeDefaultScheduledLocal(off);
+          setScheduledLocalCombined(defVal);
+        } catch (__) {}
+      }
+
+      // If Alpine woke up, also drive its validating flag off
+      if (data) data.validatingPost = false;
+
+      // Clear any transient Step 1 / Step 2 message now that we're done
+      if (errBox) {
+        errBox.textContent = '';
+        errBox.style.display = 'none';
+      }
+
+    } catch (e) {
+      console.error('[doValidatePost] network error', e);
+      clearTransient();
+      if (errBox) { errBox.style.display = 'block'; errBox.textContent = 'Network error while validating the post.'; }
+    } finally {
+      if (spinner) spinner.style.display = 'none';
+      // hide any leftover progress text
+      if (errBox && errBox.textContent && (errBox.textContent.indexOf('Contacting') === 0 || errBox.textContent.indexOf('Validating') === 0)) {
+        errBox.style.display = 'none';
+        errBox.textContent = '';
+      }
+    }
+  };
+
+  // === EARLY REGISTRATION (runs during this script, not gated on 'alpine:init' which may have already fired) ===
+  // We define the real factories here, expose them as globals (for x-data="name(...)" lookup),
+  // register them with Alpine.data right now, remove x-ignore from the containers, and force initTree.
+  // This is the only reliable way when Alpine's defer script + our bottom-of-page script create a timing gap.
+
+  function __userBanner(initialUser) {
+    const hasInitial = !!(initialUser && initialUser.id);
     return {
-      user: null,
-      loading: true,
+      user: hasInitial ? initialUser : null,
+      loading: !hasInitial,
       async init() {
-        await this.loadUser();
+        if (!this.user) {
+          await this.loadUser();
+        } else {
+          this.loading = false;
+          // For full page load right after OAuth callback (server passed user), kick schedules load
+          // so pending/executed appear immediately without manual refresh.
+          const main = document.querySelector('[x-data^="cardScheduler"]');
+          setTimeout(() => { try { if (main && main.__x && main.__x.$data && main.__x.$data.loadSchedules) main.__x.$data.loadSchedules(); } catch(e){} }, 80);
+          setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch(e){} }, 300);
+          setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch(e){} }, 900);
+        }
       },
       async loadUser() {
         this.loading = true;
@@ -462,23 +1610,27 @@
           const r = await fetch('/api/me');
           const j = await r.json();
           this.user = j.user || null;
-          // also push to the main scheduler component if present
-          const main = document.querySelector('[x-data="cardScheduler()"]');
+          const main = document.querySelector('[x-data^="cardScheduler"]');
           if (main && main.__x && this.user) {
             main.__x.$data.user = this.user;
+          }
+          // After login/user confirmed, auto-refresh schedules so pending/executed are visible immediately
+          if (this.user) {
+            setTimeout(() => { try { if (main && main.__x && main.__x.$data && main.__x.$data.loadSchedules) main.__x.$data.loadSchedules(); } catch(e){} }, 60);
+            setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch(e){} }, 280);
           }
         } catch (e) {}
         this.loading = false;
       }
-    }
+    };
   }
 
-  // Main scheduler Alpine component
-  function cardScheduler() {
+  function __cardScheduler(initialUser) {
+    const hasInitialUser = !!(initialUser && initialUser.id);
     return {
       // auth
-      user: null,
-      loadingUser: true,
+      user: hasInitialUser ? initialUser : null,
+      loadingUser: !hasInitialUser,
 
       // ads account
       manualAdsAccountId: '',
@@ -491,13 +1643,13 @@
       postUrl: '',
       validatingPost: false,
       postError: null,
-      loadedCard: null,           // now also includes original_media_type ('image' | 'video') + dimensions from server
+      loadedCard: null,
 
       // schedule form
       newTitle: '',
       newMediaId: '',
       newUrl: '',
-      scheduledAtLocal: '',       // for <input type=datetime-local>
+      scheduledAtLocal: '',
       saving: false,
 
       // live validation state
@@ -505,9 +1657,16 @@
       mediaDimError: null,
       mediaDimResult: null,
       urlError: null,
+      // track the media key we last successfully validated (for changed media)
+      validatedMediaKey: null,
 
       // schedules list
       schedules: [],
+
+      // timezone / offset (we use fixed UTC offset hours for scheduling, per user preference for simple GMT labels)
+      userTimezone: (typeof Intl !== 'undefined' && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC'),
+      chosenUtcOffset: 0,
+      _tzManuallySet: false,  // when true, don't auto-override from IP/browser detection
 
       // toasts
       toasts: [],
@@ -516,13 +1675,71 @@
         return (this.manualAdsAccountId || (this.autoAccount && this.autoAccount.id) || '').trim();
       },
 
+      // Informational only now. Returns true if there is a non-empty New Media Key value.
+      // (No longer used to gate saving.)
+      get newMediaValidated() {
+        const cur = ((this.newMediaId || '') + '').trim();
+        return !!cur;
+      },
+
       async init() {
-        await this.loadUser();
+        if (!this.user) {
+          await this.loadUser();
+        } else {
+          this.loadingUser = false;
+        }
         if (this.user) {
           await this.loadAdsAccounts();
           await this.loadSchedules();
-          // poll schedules occasionally
+          // Ensure the list (Alpine + vanilla fallback) is rendered immediately, especially right after OAuth redirect
+          try { renderSchedulesVanilla(this.schedules || []); } catch(e){}
+          setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch(e){} }, 50);
           setInterval(() => this.loadSchedules(), 30000);
+          // Also kick a robust refresh shortly after mount to ensure list is populated from DB
+          setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch (e) {} }, 400);
+          // Additional late kicks specifically to handle cases where the list doesn't appear until manual Refresh after OAuth
+          setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch(e){} }, 850);
+          setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch(e){} }, 1600);
+
+          // Browser local offset as initial (e.g. +8 for Singapore when system is set that way)
+          try {
+            if (!this._tzManuallySet && (this.chosenUtcOffset == null || this.chosenUtcOffset === 0)) {
+              const browserOff = - (new Date().getTimezoneOffset() / 60);
+              this.chosenUtcOffset = browserOff;
+            }
+          } catch (e) {}
+
+          // Populate offset dropdown (GMT/UTC only) and wire inputs
+          try { populateTimezones(); } catch (e) {}
+          try {
+            var s0 = document.querySelector('select[x-model="chosenUtcOffset"]');
+            if (s0) s0.value = String(this.chosenUtcOffset != null ? this.chosenUtcOffset : 0);
+          } catch (e) {}
+          try { wireScheduleTimeSync(); } catch (e) {}
+
+          // Try IP-based offset for better "my location" default (no city names shown)
+          setTimeout(async () => {
+            try {
+              if (this._tzManuallySet) return;
+              const r = await fetch('https://worldtimeapi.org/api/ip', { cache: 'no-store' });
+              if (!r.ok) return;
+              const j = await r.json();
+              if (j && j.utc_offset && !this._tzManuallySet) {
+                // utc_offset like "+08:00" or "-03:30"
+                const m = String(j.utc_offset).match(/([+-]?)(\d+):?(\d+)?/);
+                if (m) {
+                  const sign = m[1] === '-' ? -1 : 1;
+                  const hh = parseInt(m[2] || '0', 10);
+                  const mm = parseInt(m[3] || '0', 10);
+                  const off = sign * (hh + mm / 60);
+                  this.chosenUtcOffset = off;
+                }
+                try { populateTimezones(); } catch (e) {}
+                var s = document.querySelector('select[x-model="chosenUtcOffset"]');
+                if (s) s.value = String(this.chosenUtcOffset);
+              }
+            } catch (e) {}
+          }, 150);
         }
       },
 
@@ -532,9 +1749,7 @@
           const r = await fetch('/api/me');
           const j = await r.json();
           this.user = j.user || null;
-        } catch (e) {
-          this.user = null;
-        }
+        } catch (e) { this.user = null; }
         this.loadingUser = false;
       },
 
@@ -556,176 +1771,347 @@
       },
 
       onAdsAccountInput() {
-        // when user types, clear the "auto" highlight
         if (this.autoAccount && this.manualAdsAccountId && this.manualAdsAccountId !== this.autoAccount.id) {
-          // keep it, user is overriding
+          // keep override
+        }
+        // Changing account invalidates any prior media check result (user must click Check again)
+        if (this.loadedCard && this.newMediaId) {
+          this.clearMediaValidation();
         }
       },
 
       selectAdsAccount(id) {
         this.manualAdsAccountId = id;
         this.autoAccount = this.adsAccounts.find(a => a.id === id) || null;
-        // if we already have a loaded card, we may want to re-validate or just let user re-validate
+        if (this.loadedCard && this.newMediaId) {
+          this.clearMediaValidation();
+        }
       },
 
       // ---------- Post validation (the gate) ----------
       async validatePost() {
         this.postError = null;
-        if (!this.effectiveAdsAccountId) {
+
+        let accountId = '';
+        const accEl = document.getElementById('ads-account-input');
+        if (accEl && accEl.value) accountId = accEl.value.trim();
+        if (!accountId) accountId = (this.effectiveAdsAccountId || '').trim();
+        try { window.__lastAdsAccountId = accountId; } catch (e) {}
+
+        let pUrl = '';
+        const urlEl = document.getElementById('post-url-input');
+        if (urlEl && urlEl.value) pUrl = urlEl.value.trim();
+        if (!pUrl) pUrl = (this.postUrl || '').trim();
+
+        if (!accountId) {
           this.postError = 'Please enter or select an Ads Account ID first.';
+          this.showToast(this.postError, true);
           return;
         }
-        if (!this.postUrl.trim()) {
+        if (!pUrl) {
           this.postError = 'Please paste an X post URL.';
+          this.showToast(this.postError, true);
           return;
         }
 
         this.validatingPost = true;
+        this.postError = null;
         try {
           const r = await fetch('/api/validate-post', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              post_url: this.postUrl.trim(),
-              ads_account_id: this.effectiveAdsAccountId
-            })
+            body: JSON.stringify({ post_url: pUrl, ads_account_id: accountId })
           });
           const j = await r.json();
           if (!r.ok) {
             this.postError = j.detail || 'Validation failed.';
             this.loadedCard = null;
+            this.showToast(this.postError, true);
             return;
           }
-          // success
-          this.loadedCard = j.card;
-          // prefill the form with current values
-          this.newTitle = this.loadedCard.title || '';
-          this.newMediaId = this.loadedCard.media_id || '';
-          this.newUrl = this.loadedCard.url || '';
+            this.postError = null;
+            this.loadedCard = j.card;
+            // Aspect ratio (if provided by server from the Ads API) is used as-is for Current Card and checks.
+            this.newTitle = this.loadedCard.title || '';
+            this.newMediaId = this.loadedCard.media_id || '';
+            this.newUrl = this.loadedCard.url || '';
+            // stash the original post URL so we can show a proper link after successful scheduled run
+            try { window.__lastPostUrl = pUrl || this.postUrl || ''; } catch (e) {}
+            if (!this.postUrl) this.postUrl = pUrl || '';
+
+            // Sync the account we just used so media key checks see it right away
+            if (accountId && !this.manualAdsAccountId) {
+              this.manualAdsAccountId = accountId;
+            }
+            try { if (accountId) window.__lastAdsAccountId = accountId; } catch (e) {}
+
           this.mediaDimError = null;
           this.mediaDimResult = null;
-          this.urlError = null;
+          this.validatedMediaKey = null;
+          try { window.__validatedNewMedia = null; } catch (e) {}
 
-          // default schedule time = now + 2 hours
-          this.setQuickTime(2);
+          // Do not auto-show New Media details. User must click the Check button.
+
+          if (window.updateSaveButtonState) { try { window.updateSaveButtonState(); } catch(e){} }
+
+          // No auto call to checkMediaDimensions here.
+          this.urlError = null;
+          this.postError = null;
+
+          // default a time ~1h from now in the chosen offset (24h)
+          try {
+            const off = Number(this.chosenUtcOffset) || 0;
+            const defVal = computeDefaultScheduledLocal(off);
+            this.scheduledAtLocal = defVal;
+            setScheduledLocalCombined(defVal);
+          } catch(e){}
 
           this.showToast('Card loaded. You can now schedule an update.');
+          // Also ensure the blocks are visible if this Alpine path was the one that succeeded
+          try {
+            var cblk = document.getElementById('current-card-block');
+            if (cblk) cblk.style.display = '';
+            var sblk = document.getElementById('schedule-block');
+            if (sblk) sblk.style.display = '';
+            // wire the media check/save state hooks
+            try { __forceInitOurRoots(); } catch(e){}
+            var chk2 = document.getElementById('check-media-btn');
+            if (chk2) { chk2.__wiredDirect = true; chk2.onclick = function(ev){ ev&&ev.preventDefault&&ev.preventDefault(); if(window.doCheckNewMediaKey) window.doCheckNewMediaKey(); }; }
+            wireCheckMediaButton();
+            // attach input sync if not yet (for this path)
+            try {
+              var mi2 = document.getElementById('new-media-input');
+              if (mi2 && !mi2.__mediaWiredForSave) {
+                mi2.__mediaWiredForSave = true;
+                var p = function(){ try { var rr=document.querySelector('[x-data^="cardScheduler"]'); if(rr&&rr.__x&&rr.__x.$data) rr.__x.$data.newMediaId=(mi2.value||'').trim(); }catch(e){} if(window.updateSaveButtonState) window.updateSaveButtonState(); };
+                mi2.addEventListener('input', p); mi2.addEventListener('blur', p); mi2.addEventListener('change', p);
+              }
+            } catch(e){}
+            if (window.updateSaveButtonState) window.updateSaveButtonState();
+          } catch(e){}
         } catch (e) {
           this.postError = 'Network error while validating the post.';
+          this.showToast(this.postError, true);
         } finally {
           this.validatingPost = false;
         }
       },
 
       resetCard() {
-        this.loadedCard = null;
-        this.postUrl = '';
-        this.postError = null;
-        this.newTitle = '';
-        this.newMediaId = '';
-        this.newUrl = '';
-        this.scheduledAtLocal = '';
-        this.mediaDimError = null;
-        this.mediaDimResult = null;
-        this.urlError = null;
+        this.loadedCard = null; this.postUrl = ''; this.postError = null;
+        this.newTitle = ''; this.newMediaId = ''; this.newUrl = '';
+        this.scheduledAtLocal = ''; this.mediaDimError = null; this.mediaDimResult = null; this.urlError = null;
+        this.validatedMediaKey = null;
+        try { window.__validatedNewMedia = null; } catch(e){}
+        // clear visible split inputs too
+        var d = document.getElementById('schedule-date-input'); if (d) d.value = '';
+        var t = document.getElementById('schedule-time-part'); if (t) t.value = '';
+        var h = document.getElementById('schedule-time-input'); if (h) h.value = '';
       },
 
-      // ---------- Media dimension check ----------
       async checkMediaDimensions() {
+        // Delegate to the robust standalone implementation (works even if Alpine state lags)
+        if (window.doCheckNewMediaKey) {
+          // fire and let it also try to sync result back into Alpine
+          window.doCheckNewMediaKey();
+          return;
+        }
+        // Fallback implementation (info only)
+        const inputEl = document.getElementById('new-media-input');
+        let rawNew = inputEl ? (inputEl.value || '').trim() : '';
+        if (!rawNew) rawNew = (this.newMediaId || '').trim();
+
+        // Keep Alpine in sync
+        if (rawNew && this.newMediaId !== rawNew) {
+          this.newMediaId = rawNew;
+          if (inputEl) inputEl.value = rawNew;
+        }
+
+        console.log('[MEDIA-CHECK] checkMediaDimensions (info only) called', {
+          newMediaId: rawNew,
+          effectiveAds: this.effectiveAdsAccountId
+        });
+
         this.mediaDimError = null;
         this.mediaDimResult = null;
-        if (!this.effectiveAdsAccountId || !this.newMediaId || !this.loadedCard) return;
 
-        // if same as original, auto-allow (preserve type too)
-        if (this.newMediaId === (this.loadedCard.media_id || '')) {
-          const t = this.loadedCard.original_media_type || null;
-          this.mediaDimResult = {
-            match: true,
-            type_match: true,
-            original: { width: this.loadedCard.original_media_width, height: this.loadedCard.original_media_height, media_type: t },
-            new: { width: this.loadedCard.original_media_width, height: this.loadedCard.original_media_height, media_type: t }
-          };
+        if (!rawNew) {
+          this.mediaDimError = 'Enter a media key and click Check to load its details.';
+          setTimeout(() => { if (this.mediaDimError && this.mediaDimError.indexOf('Enter a media key') === 0) this.mediaDimError = null; }, 2000);
+          return;
+        }
+
+        // Need an ads account to query the media library
+        let adsId = (this.effectiveAdsAccountId || '').trim();
+        if (!adsId) {
+          try {
+            const ael = document.getElementById('ads-account-input');
+            if (ael && ael.value) {
+              adsId = ael.value.trim();
+              if (adsId) this.manualAdsAccountId = adsId;
+            } else if (window.__lastAdsAccountId) {
+              adsId = window.__lastAdsAccountId;
+              if (adsId) this.manualAdsAccountId = adsId;
+            }
+          } catch (e) {}
+        }
+        if (!adsId) {
+          this.mediaDimError = 'Enter or select an X Ads Account ID first, then click Check.';
           return;
         }
 
         this.mediaDimLoading = true;
         try {
-          const r = await fetch('/api/check-media', {
+          console.log('[MEDIA-CHECK] calling /api/media-info for', rawNew);
+          const r = await fetch('/api/media-info', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ads_account_id: this.effectiveAdsAccountId,
-              original_media_id: this.loadedCard.media_id,
-              new_media_id: this.newMediaId
-            })
+            body: JSON.stringify({ ads_account_id: adsId, media_id: rawNew })
           });
-          const j = await r.json();
-          if (!j.match) {
-            this.mediaDimError = j.error || 'Media must match original dimensions and type (image/video).';
+          const j = await r.json().catch(() => ({}));
+          console.log('[MEDIA-CHECK] response', r.status, j);
+
+          if (!r.ok || j.ok === false) {
+            this.mediaDimError = j.error || 'Could not load media info.';
+            this.mediaDimResult = null;
           } else {
-            this.mediaDimResult = j;
+            this.mediaDimError = null;
+            // Store under .new so existing display template continues to work.
+            this.mediaDimResult = {
+              new: {
+                media_type: j.media_type,
+                width: j.width,
+                height: j.height,
+                aspect_ratio: j.aspect_ratio,
+                preview: j.preview
+              }
+            };
           }
         } catch (e) {
-          this.mediaDimError = 'Could not verify media dimensions (network).';
+          console.error('[MEDIA-CHECK] fetch error', e);
+          this.mediaDimError = 'Could not load media info (network).';
+          this.mediaDimResult = null;
         } finally {
           this.mediaDimLoading = false;
         }
       },
 
-      async validateNewUrl() {
-        this.urlError = null;
-        const u = (this.newUrl || '').trim();
-        if (!u) return;
+      clearMediaValidation() {
+        // Just clear the last fetched info / any message. No validation state to manage anymore.
+        this.mediaDimError = null;
+        this.mediaDimResult = null;
+        this.validatedMediaKey = null;
+        try { window.__validatedNewMedia = null; } catch (e) {}
         try {
-          const r = await fetch('/api/validate-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: u })
-          });
-          const j = await r.json();
-          if (!j.valid) this.urlError = j.error || 'Invalid URL.';
-        } catch (e) {
-          // non-fatal
-        }
+          var st = document.getElementById('media-check-status');
+          if (st) st.innerHTML = '';
+        } catch (e) {}
       },
 
-      // ---------- Scheduling helpers ----------
-      setQuickTime(hoursOrDays) {
-        const d = new Date();
-        if (hoursOrDays === 24) {
-          // tomorrow at 09:00 local
-          d.setDate(d.getDate() + 1);
-          d.setHours(9, 0, 0, 0);
-        } else if (hoursOrDays === 48) {
-          d.setDate(d.getDate() + 2);
-          d.setHours(9, 0, 0, 0);
-        } else {
-          d.setHours(d.getHours() + hoursOrDays);
-        }
-        // format for datetime-local: YYYY-MM-DDTHH:MM
-        const pad = n => String(n).padStart(2, '0');
-        const val = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        this.scheduledAtLocal = val;
+      async validateNewUrl() {
+        this.urlError = null;
+        const u = (this.newUrl || '').trim(); if (!u) return;
+        try {
+          const r = await fetch('/api/validate-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u }) });
+          const j = await r.json(); if (!j.valid) this.urlError = j.error || 'Invalid URL.';
+        } catch (e) {}
       },
 
       epochFromLocal(localStr) {
+        // Interpret the wall time numbers (YYYY-MM-DDTHH:mm) as local in the *chosen UTC offset* (fixed, no DST).
+        // chosenUtcOffset is hours from UTC, e.g. 8 for GMT/UTC+8, -5 for GMT/UTC-5.
         if (!localStr) return 0;
-        // datetime-local is local time, convert to epoch seconds
-        const dt = new Date(localStr);
-        return Math.floor(dt.getTime() / 1000);
+        let offsetHours = 0;
+        if (this.chosenUtcOffset != null) offsetHours = Number(this.chosenUtcOffset) || 0;
+        try {
+          const [ds, tstr] = localStr.split('T');
+          if (!ds || !tstr) return 0;
+          const [y, mo, d] = ds.split('-').map(Number);
+          const [h, m] = tstr.split(':').map(Number);
+          if (!y || !mo || !d) return 0;
+
+          // wall numbers are in the chosen offset => UTC = wall - offset
+          const offMin = Math.round(offsetHours * 60);
+          const wallUtcGuess = Date.UTC(y, (mo || 1) - 1, d || 1, h || 0, m || 0, 0, 0);
+          const utcMs = wallUtcGuess - (offMin * 60000);
+          return Math.floor(utcMs / 1000);
+        } catch (e) {
+          const d = new Date(localStr);
+          return d ? Math.floor(d.getTime() / 1000) : 0;
+        }
+      },
+
+      isScheduleTimeInPast() {
+        const epoch = this.epochFromLocal(this.scheduledAtLocal);
+        if (!epoch) return false;
+        return epoch <= (Date.now() / 1000);
       },
 
       async saveSchedule() {
-        if (!this.loadedCard || !this.effectiveAdsAccountId) return;
-        if (this.mediaDimError || this.urlError) return;
+        console.log('[SCHED-SAVE] Alpine saveSchedule() entered', {
+          loadedCard: !!this.loadedCard,
+          effectiveAdsAccountId: this.effectiveAdsAccountId,
+          scheduledAtLocal: this.scheduledAtLocal,
+          chosenUtcOffset: this.chosenUtcOffset
+        });
 
-        const scheduledEpoch = this.epochFromLocal(this.scheduledAtLocal);
-        if (!scheduledEpoch || scheduledEpoch <= (Date.now()/1000 + 30)) {
-          this.showToast('Please choose a time at least 1 minute in the future.', true);
+        // Always force-read from DOM inputs for reliability (Alpine x-model can lag)
+        const comb = getScheduledLocalCombined();
+        if (comb) this.scheduledAtLocal = comb;
+
+        const t = document.getElementById('new-title-input'); if (t != null) this.newTitle = t.value || '';
+        const m = document.getElementById('new-media-input'); if (m != null) this.newMediaId = (m.value || '').trim();
+        const u = document.getElementById('new-url-input'); if (u != null) this.newUrl = u.value || '';
+        // Do NOT auto-default a blank New Media Key to original here.
+        // The prefill on Validate Post puts the original value in the input for the "no change" case.
+
+        // Also force the offset from the visible select (in case x-model didn't propagate)
+        try {
+          var offSel2 = document.querySelector('select[x-model="chosenUtcOffset"]');
+          if (offSel2 && offSel2.value !== '') this.chosenUtcOffset = Number(offSel2.value);
+        } catch (e) {}
+
+        // First-save robustness: pull ads id directly from the input if the reactive property is empty
+        if (!this.effectiveAdsAccountId) {
+          try {
+            var ael = document.getElementById('ads-account-input');
+            if (ael && ael.value) this.manualAdsAccountId = ael.value.trim();
+            else if (window.__lastAdsAccountId) this.manualAdsAccountId = window.__lastAdsAccountId;
+          } catch (e) {}
+        }
+
+        console.log('[SCHED-SAVE] after DOM sync', {
+          scheduledAtLocal: this.scheduledAtLocal,
+          chosenUtcOffset: this.chosenUtcOffset,
+          effectiveAds: this.effectiveAdsAccountId
+        });
+
+        if (!this.loadedCard || !this.effectiveAdsAccountId) {
+          console.log('[SCHED-SAVE] guard fail: no loadedCard or no ads account');
+          this.showToast('Load a card and select an Ads Account ID first.', true);
+          return;
+        }
+        if (this.mediaDimError) { this.showToast(this.mediaDimError, true); return; }
+        if (this.urlError) { this.showToast(this.urlError, true); return; }
+
+        let scheduledEpoch = this.epochFromLocal(this.scheduledAtLocal);
+        const nowSec = Date.now() / 1000;
+        console.log('[SCHED-SAVE] epoch computed:', scheduledEpoch, 'nowSec:', nowSec, 'isFuture?', scheduledEpoch > nowSec);
+
+        if (!scheduledEpoch || scheduledEpoch <= nowSec) {
+          this.showToast('Scheduled time must be in the future.', true);
           return;
         }
 
+        // Media check is now informational only. No validation gate on save.
         this.saving = true;
+        console.log('[SCHED-SAVE] starting POST /api/schedules, epoch=', scheduledEpoch);
+
+        const enteredNewMid = (this.newMediaId || '').trim();
+        // Send the type from the last successful Check if available; server will always re-fetch
+        // using the provided new_media_id and will enforce type compatibility for changes.
+        const checkedNewType = (this.mediaDimResult && this.mediaDimResult.new && this.mediaDimResult.new.media_type) || null;
+
         try {
           const payload = {
             ads_account_id: this.effectiveAdsAccountId,
@@ -737,78 +2123,434 @@
             original_media_width: this.loadedCard.original_media_width,
             original_media_height: this.loadedCard.original_media_height,
             original_media_type: this.loadedCard.original_media_type || null,
-            new_title: this.newTitle.trim(),
-            new_media_id: this.newMediaId.trim(),
-            new_url: this.newUrl.trim(),
-            new_media_type: (this.mediaDimResult && this.mediaDimResult.new && this.mediaDimResult.new.media_type) || this.loadedCard.original_media_type || null,
-            scheduled_at: scheduledEpoch
+            original_aspect_ratio: this.loadedCard.original_aspect_ratio || null,
+            new_title: (this.newTitle || '').trim(),
+            new_media_id: enteredNewMid,
+            new_url: (this.newUrl || '').trim(),
+            new_media_type: checkedNewType,
+            scheduled_at: scheduledEpoch,
+            original_post_url: (this.postUrl || window.__lastPostUrl || '')
           };
-
-          const r = await fetch('/api/schedules', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+          console.log('[SCHED-SAVE] payload (new vs orig)', {
+            new_media_id: payload.new_media_id,
+            original_media_id: payload.original_media_id,
+            new_media_type: payload.new_media_type,
+            original_media_type: payload.original_media_type
           });
-          const j = await r.json();
-          if (!r.ok) {
-            this.showToast(j.detail || 'Failed to save schedule.', true);
-            return;
-          }
+          console.log('[SCHED-SAVE] full payload', payload);
+          const r = await fetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          const j = await r.json().catch(() => ({}));
+          console.log('[SCHED-SAVE] response', r.status, j);
+          if (!r.ok) { this.showToast(j.detail || 'Failed to save schedule.', true); return; }
           this.showToast('Schedule saved. It will run at the chosen time.');
+          // Optimistic insert so the list appears immediately even if refresh races
+          if (j && j.schedule) {
+            const cur = Array.isArray(this.schedules) ? this.schedules : [];
+            const without = cur.filter(ss => String(ss.id) !== String(j.schedule.id));
+            const sched = j.schedule;
+            // Ensure changes summary is present for immediate display of "Will change"
+            if (!sched.changes || !sched.changes.length) {
+              sched.changes = (window.buildScheduleChanges ? window.buildScheduleChanges(sched) : []);
+            }
+            this.schedules = [sched, ...without];
+          }
           await this.loadSchedules();
-          // keep the form but bump the time a bit for convenience
-          this.setQuickTime(2);
+          try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch (e) {}
+          // also ensure vanilla sees it
+          try { renderSchedulesVanilla(this.schedules || []); } catch (e) {}
         } catch (e) {
+          console.error('[SCHED-SAVE] fetch error', e);
           this.showToast('Network error while saving schedule.', true);
-        } finally {
-          this.saving = false;
-        }
+        } finally { this.saving = false; }
       },
 
       async loadSchedules() {
         try {
           const r = await fetch('/api/schedules');
+          if (!r.ok) {
+            console.warn('[SCHED] loadSchedules non-ok', r.status);
+            const txt = await r.text().catch(() => '');
+            console.log('[SCHED] loadSchedules error body:', txt.slice(0,200));
+            this.schedules = [];
+            return;
+          }
           const j = await r.json();
-          this.schedules = j.schedules || [];
-        } catch (e) {}
+          var incoming = (j.schedules || []).map(function(s){
+            if (!s.changes || !s.changes.length) {
+              s = Object.assign({}, s);
+              s.changes = (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []);
+            }
+            return s;
+          });
+          this.schedules = incoming;
+          console.log('[SCHED] loadSchedules updated, count=', this.schedules.length);
+          try { renderSchedulesVanilla(this.schedules || []); } catch(e){}
+          var sl = document.getElementById('schedules'); if (sl) sl.style.display = '';
+          // Nudge the global path too (helps when Alpine view hasn't flushed)
+          setTimeout(() => { try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch(e){} }, 10);
+        } catch (e) {
+          console.error('[SCHED] loadSchedules exception', e);
+        }
       },
 
       async cancelSchedule(id) {
-        try {
-          await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
-          await this.loadSchedules();
-          this.showToast('Schedule cancelled.');
-        } catch (e) {
-          this.showToast('Failed to cancel.', true);
-        }
+        try { await fetch(`/api/schedules/${id}`, { method: 'DELETE' }); await this.loadSchedules(); this.showToast('Schedule cancelled.'); } catch (e) { this.showToast('Failed to cancel.', true); }
       },
 
       async forceExecute(id) {
         if (!confirm('Run this update immediately? (for testing)')) return;
         try {
           const r = await fetch(`/api/schedules/${id}/execute`, { method: 'POST' });
+          const j = await r.json().catch(() => ({}));
           if (r.ok) {
-            this.showToast('Execution started. Check status in a moment.');
-            setTimeout(() => this.loadSchedules(), 1200);
+            await this.loadSchedules();
+            try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch (e) {}
+            if (j.status === 'failed') {
+              this.showToast('Run now failed: ' + (j.result || 'see details in the list'), true);
+            } else {
+              this.showToast('Execution started. Check status in the list.');
+            }
           } else {
-            const j = await r.json().catch(() => ({}));
             this.showToast(j.detail || 'Execution failed to start.', true);
           }
-        } catch (e) {
-          this.showToast('Network error on manual execute.', true);
-        }
+        } catch (e) { this.showToast('Network error on manual execute.', true); }
       },
 
-      // ---------- UI helpers ----------
       showToast(msg, isError = false) {
-        const id = Date.now();
-        this.toasts.push({ id, msg, isError });
-        setTimeout(() => {
-          this.toasts = this.toasts.filter(t => t.id !== id);
-        }, 4200);
+        // Feed the single global toast region (rendered at end of body)
+        try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg, isError } })); } catch (e) {}
+      },
+
+      markTzManual() {
+        this._tzManuallySet = true;
+        // Coerce the bound value to a number for our offset math
+        if (this.chosenUtcOffset != null) this.chosenUtcOffset = Number(this.chosenUtcOffset);
       }
-    }
+    };
   }
+
+  // Expose as globals (for x-data="cardScheduler(...)" expression lookup) and register with Alpine immediately.
+  window.userBanner = __userBanner;
+  window.cardScheduler = __cardScheduler;
+
+  if (window.Alpine && typeof Alpine.data === 'function') {
+    Alpine.data('userBanner', __userBanner);
+    Alpine.data('cardScheduler', __cardScheduler);
+  }
+
+  // One immediate force right after registration
+  try { __forceInitOurRoots(); } catch (e) {}
+
+  // Always force-init our two roots after the factories are registered.
+  // This handles cases where Alpine auto-scanned before registration (no x-ignore or timing).
+  function __forceInitOurRoots() {
+    document.querySelectorAll('[x-data*="userBanner"], [x-data*="cardScheduler"]').forEach(function(el) {
+      if (el.hasAttribute('x-ignore')) el.removeAttribute('x-ignore');
+      if (window.Alpine && typeof Alpine.initTree === 'function') {
+        try { Alpine.initTree(el); } catch (e) { console.warn('initTree error', e); }
+      }
+    });
+    try { populateTimezones(); } catch (e) {}
+    try { wireScheduleTimeSync(); } catch (e) {}
+  }
+
+  // Remove x-ignore (we placed it to block premature init) and force Alpine to walk the trees now that the factories exist.
+  (function activateCardXNow() {
+    function act() {
+      __forceInitOurRoots();
+    }
+    act();
+    setTimeout(act, 0);
+    setTimeout(act, 80);
+    setTimeout(act, 220);
+    setTimeout(act, 450);
+
+    // Extra post-OAuth / initial-user kicks for schedules list.
+    // After OAuth redirect the server renders with the user already in the x-data,
+    // so we aggressively ask the list to load + render (Alpine + vanilla) a few times.
+    function kickSchedules() {
+      try {
+        var root = document.querySelector('[x-data^="cardScheduler"]');
+        if (root && root.__x && root.__x.$data) {
+          if (root.__x.$data.user) {
+            if (typeof root.__x.$data.loadSchedules === 'function') {
+              root.__x.$data.loadSchedules();
+            }
+          }
+        }
+      } catch (e) {}
+      try { if (window.refreshSchedulesList) window.refreshSchedulesList(); } catch (e) {}
+    }
+    setTimeout(kickSchedules, 120);
+    setTimeout(kickSchedules, 380);
+    setTimeout(kickSchedules, 820);
+    setTimeout(kickSchedules, 1400);
+  })();
+
+  // Safety net: if alpine:init fires later (or more elements are added), re-register + re-activate.
+  document.addEventListener('alpine:init', () => {
+    if (window.Alpine && typeof Alpine.data === 'function') {
+      Alpine.data('userBanner', __userBanner);
+      Alpine.data('cardScheduler', __cardScheduler);
+    }
+    setTimeout(function() {
+      __forceInitOurRoots();
+    }, 0);
+  });
+
+  // Attach listeners once for critical buttons. We prefer the onclick attribute as the primary
+  // for Save Schedule (single source), but we still attach a guarded listener for robustness.
+  (function wireStandaloneButtons() {
+    function wire() {
+      var testBtn = document.querySelector('button[onclick*="testAdsAccountAccess"]');
+      if (testBtn && !testBtn.__wiredTest) {
+        testBtn.__wiredTest = true;
+        testBtn.addEventListener('click', function(){ if (window.testAdsAccountAccess) window.testAdsAccountAccess(); });
+      }
+      var valBtn = document.querySelector('button[onclick*="doValidatePost"]');
+      if (valBtn && !valBtn.__wiredVal) {
+        valBtn.__wiredVal = true;
+        valBtn.addEventListener('click', function(){ if (window.doValidatePost) window.doValidatePost(); });
+      }
+
+      // Save Schedule: we rely ONLY on the onclick attribute now (single, reliable trigger).
+      // No extra click listener is attached for it, to avoid duplicate calls.
+      // (The guard below is just to mark it if we ever want to detect it.)
+      var saveBtn = document.getElementById('save-schedule-btn');
+      if (saveBtn && !saveBtn.__wiredSave) {
+        saveBtn.__wiredSave = true;  // marker only; no listener added
+      }
+
+      // Refresh button — give it a vanilla fallback so it works even if Alpine @click is flaky
+      var refBtn = document.querySelector('#schedules button');
+      if (refBtn && !refBtn.__wiredRefresh) {
+        refBtn.__wiredRefresh = true;
+        refBtn.addEventListener('click', function(){
+          console.log('[SCHED] refresh clicked');
+          if (window.refreshSchedulesList) window.refreshSchedulesList();
+        });
+      }
+
+      // Ensure our Check media button is always wired
+      try { wireCheckMediaButton(); } catch (e) {}
+    }
+    wire();
+    setTimeout(wire, 80);
+    setTimeout(wire, 250);
+    document.addEventListener('DOMContentLoaded', wire);
+  })();
+
+  // Helper: compute the list of human changes (original → new) from a schedule record.
+  // Used for pending ("Will change") and executed ("Changed") display.
+  window.buildScheduleChanges = function buildScheduleChanges(s) {
+    if (!s) return [];
+    var out = [];
+    if ((s.new_title || '') !== (s.original_title || '')) {
+      out.push('title: "' + (s.original_title || '') + '" → "' + (s.new_title || '') + '"');
+    }
+    if ((s.new_media_id || '') !== (s.original_media_id || '')) {
+      out.push('media key: ' + (s.original_media_id || '') + ' → ' + (s.new_media_id || ''));
+    }
+    if ((s.new_url || '') !== (s.original_url || '')) {
+      out.push('url → ' + (s.new_url || ''));
+    }
+    if (s.new_media_type && s.new_media_type !== s.original_media_type) {
+      out.push('type: ' + (s.original_media_type || '?') + ' → ' + s.new_media_type);
+    }
+    return out;
+  };
+
+  // Helper to render schedule "result" text with clickable post link for success cases (new tab).
+  window.formatScheduleResultHtml = function formatScheduleResultHtml(result, isFailed) {
+    if (!result) return '';
+    function esc(str) {
+      return String(str).replace(/[&<>"']/g, function(m) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]);
+      });
+    }
+    var out = esc(result);
+    if (!isFailed) {
+      // Linkify any http(s) URL found in success results so they are clickable and open in a new tab.
+      // This covers our "Post: https://..." strings and any legacy/variant results.
+      out = out.replace(/(^|[\s(>"])(https?:\/\/[^\s<>"')]+)/gi,
+        function(m, p1, p2){ return p1 + '<a href="' + p2 + '" target="_blank" rel="noopener noreferrer" class="underline text-primary hover:text-primary/80 break-all">' + p2 + '</a>'; });
+    }
+    return out;
+  };
+
+  // Fallback vanilla renderer so the list is visible even if Alpine never attached its data to the root.
+  function renderSchedulesVanilla(list) {
+    var body = document.getElementById('schedules-list-body');
+    if (!body) return;
+    var sl = document.getElementById('schedules'); if (sl) sl.style.display = '';
+    if (!list || list.length === 0) {
+      body.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">No schedules yet. Load a card above and create your first scheduled update.</div>';
+      return;
+    }
+    // Sanitize any legacy JSON results for completed (defensive, in case list came from memory)
+    list = (list || []).map(function(s){
+      if (s && s.status === 'completed' && s.result) {
+        var rs = String(s.result || '').trim();
+        if (rs[0] === '{' || rs[0] === '[') {
+          var p = s.original_post_url || s.new_url || '';
+          s = Object.assign({}, s, { result: p ? ('Card updated. Post: ' + p) : 'Card updated.' });
+        }
+      }
+      // Ensure changes array exists for the "Will change / Changed" block
+      if (!s.changes || !s.changes.length) {
+        s.changes = (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []);
+      }
+      return s;
+    });
+    var html = '<div class="divide-y divide-border text-sm">';
+    list.forEach(function(s){
+      var sc = 'bg-zinc-500/10 text-zinc-400';
+      if (s.status === 'pending') sc = 'bg-yellow-500/10 text-yellow-400';
+      else if (s.status === 'running') sc = 'bg-blue-500/10 text-blue-400';
+      else if (s.status === 'completed') sc = 'bg-green-500/10 text-green-400';
+      else if (s.status === 'failed') sc = 'bg-red-500/10 text-red-400';
+      var when = new Date(((s.scheduled_at||0)*1000)).toLocaleString();
+      html += '<div class="p-4 flex flex-col md:flex-row md:items-start gap-3">' +
+        '<div class="flex-1 space-y-1">' +
+          '<div class="flex items-center gap-2">' +
+            '<span class="font-mono text-xs px-1.5 py-0.5 bg-muted rounded">' + (s.ads_account_id || '') + '</span>' +
+            '<span class="font-mono text-xs text-muted-foreground">card:</span>' +
+            '<span class="font-mono text-xs">' + (s.card_id || '') + '</span>' +
+            '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '">' + (s.status || '') + '</span>' +
+          '</div>' +
+          '<div class="text-xs text-muted-foreground"><span>Scheduled (local time): </span><span class="text-foreground">' + when + '</span></div>' +
+          (s.executed_at ? '<div class="text-xs text-muted-foreground"><span>Executed: </span><span class="text-foreground">' + new Date(s.executed_at * 1000).toLocaleString() + '</span></div>' : '') +
+          (function(){
+            // Always compute changes client-side as fallback (for optimistic inserts etc.)
+            var ch = (s.changes && s.changes.length) ? s.changes : (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []);
+            if (ch && ch.length) {
+              var label = (s.status === 'pending') ? 'Will change:' : 'Changed:';
+              return '<div class="text-[10px] pt-0.5"><span class="text-muted-foreground">' + label + '</span> <span class="text-foreground">' + ch.join('  •  ') + '</span></div>';
+            }
+            return '';
+          })() +
+          '<div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-0.5 pt-1 text-xs">' +
+            '<div><span class="text-muted-foreground">Title:</span> ' + (s.new_title || '') + '</div>' +
+            (function(){
+              var om = s.original_media_id || '';
+              var nm = s.new_media_id || '';
+              if (om && nm && om !== nm) {
+                return '<div><span class="text-muted-foreground">Media key:</span> <span class="font-mono break-all">' + om + ' → ' + nm + '</span></div>';
+              }
+              return '<div><span class="text-muted-foreground">Media key:</span> <span class="font-mono break-all">' + nm + '</span></div>';
+            })() +
+            '<div class="sm:col-span-3"><span class="text-muted-foreground">URL:</span> <span class="font-mono text-primary break-all">' + (s.new_url || '') + '</span></div>' +
+          '</div>' +
+          (function(){
+            var op = s.original_preview || '';
+            var np = s.new_preview || '';
+            var om = s.original_media_id || '';
+            var nm = s.new_media_id || '';
+            if (om && nm && om !== nm && (op || np)) {
+              var html = '<div class="pt-1 flex items-center gap-2 text-[10px]"><span class="text-muted-foreground shrink-0">Media previews:</span><div class="flex items-center gap-1.5">';
+              if (op) html += '<img src="' + op.replace(/"/g,'&quot;') + '" alt="original" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
+              html += '<span class="text-muted-foreground">→</span>';
+              if (np) html += '<img src="' + np.replace(/"/g,'&quot;') + '" alt="new" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
+              html += '</div></div>';
+              return html;
+            }
+            return '';
+          })() +
+          (function(){
+            if (!s.result || (s.status !== 'failed' && s.status !== 'completed')) return '';
+            var isF = (s.status === 'failed');
+            var rhtml = (window.formatScheduleResultHtml ? window.formatScheduleResultHtml(s.result, isF) : (s.result||'').replace(/</g,'&lt;'));
+            var rcls = isF ? 'text-red-400 font-mono' : 'text-muted-foreground';
+            return '<div class="text-[10px] pt-1 break-all ' + rcls + '">' + rhtml + '</div>';
+          })() +
+        '</div>' +
+        '<div class="flex md:flex-col gap-2 shrink-0">' +
+          (s.status === 'pending' ? '<button class="btn-danger text-xs" data-vcancel="' + s.id + '">Cancel</button>' : '') +
+          '<button class="btn-outline text-xs" data-vrun="' + s.id + '">Run now</button>' +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+    body.innerHTML = html;
+
+    // Wire vanilla action buttons
+    body.querySelectorAll('button[data-vcancel]').forEach(function(b){
+      var id = parseInt(b.getAttribute('data-vcancel'), 10);
+      b.onclick = function(){ fetch('/api/schedules/' + id, {method:'DELETE'}).then(function(){ window.refreshSchedulesList(); }); };
+    });
+    body.querySelectorAll('button[data-vrun]').forEach(function(b){
+      var id = parseInt(b.getAttribute('data-vrun'), 10);
+      b.onclick = function(){
+        if (!confirm('Run this update immediately? (for testing)')) return;
+        fetch('/api/schedules/' + id + '/execute', {method:'POST'}).then(function(r){ if (r.ok) setTimeout(window.refreshSchedulesList, 900); });
+      };
+    });
+  }
+
+  window.cancelScheduleVanilla = function(id){ fetch('/api/schedules/'+id, {method:'DELETE'}).then(function(){ window.refreshSchedulesList(); }); };
+  window.forceExecuteVanilla = function(id){
+    if (!confirm('Run now?')) return;
+    fetch('/api/schedules/'+id+'/execute', {method:'POST'})
+      .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
+        // refresh so the result (success or the error text) appears in the list
+        setTimeout(function(){ try { window.refreshSchedulesList(); } catch(e){} }, 700);
+        if (!r.ok || j.status === 'failed') {
+          var msg = (j && (j.result || j.detail)) || 'Run now failed (see list for details)';
+          try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Run now: ' + msg, isError: true } })); } catch(e){}
+        } else {
+          try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Execution started. Check the list.' } })); } catch(e){}
+        }
+      }); })
+      .catch(function(e){
+        try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Network error running now.', isError: true } })); } catch(e){}
+      });
+  };
+
+  // Global helper to refresh the schedules list from DOM without relying on a perfect Alpine instance.
+  window.refreshSchedulesList = function refreshSchedulesList() {
+    fetch('/api/schedules').then(function(r){
+      if (!r.ok) {
+        console.warn('[SCHED] refreshSchedulesList non-ok status', r.status);
+        return r.json().catch(function(){ return {}; }).then(function(jj){
+          console.log('[SCHED] refresh error body', jj);
+          throw new Error(jj.detail || 'HTTP ' + r.status);
+        });
+      }
+      return r.json();
+    }).then(function(j){
+      var list = (j.schedules || []).map(function(s){
+        if (!s.changes || !s.changes.length) {
+          s = Object.assign({}, s);
+          s.changes = (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []);
+        }
+        return s;
+      });
+      console.log('[SCHED] refreshSchedulesList got count=', list.length, 'sample=', list.slice(0,2));
+
+      var root = document.querySelector('[x-data^="cardScheduler"]');
+      if (root && root.__x && root.__x.$data) {
+        root.__x.$data.schedules = list;
+        var sl = document.getElementById('schedules'); if (sl) sl.style.display = '';
+      } else {
+        try { __forceInitOurRoots(); } catch (e) {}
+        setTimeout(function(){
+          var r2 = document.querySelector('[x-data^="cardScheduler"]');
+          if (r2 && r2.__x && r2.__x.$data) {
+            r2.__x.$data.schedules = list;
+            var sl2 = document.getElementById('schedules'); if (sl2) sl2.style.display = '';
+          } else {
+            // Ultimate fallback: render what we have from the DB directly
+            console.log('[SCHED] Alpine still not attached after retry — using vanilla list render');
+            renderSchedulesVanilla(list);
+          }
+        }, 90);
+      }
+
+      // Always force a vanilla render shortly after (this makes the list appear reliably even right after OAuth redirect
+      // when Alpine reactivity or x-for may not have flushed yet).
+      setTimeout(function(){ try { renderSchedulesVanilla(list); } catch(e){} }, 5);
+    }).catch(function(e){ console.error('[SCHED] refreshSchedulesList failed', e); });
+  };
 
   // Global toast container (simple, no extra deps)
   // We mount a small fixed toast region via a second tiny alpine root at the end of body
