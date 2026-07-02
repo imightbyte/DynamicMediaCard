@@ -11,6 +11,8 @@ services:
       mountPath: /var/data
       sizeGB: 5
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
       - key: DB_PATH
         value: /var/data/dynamic_media_card.db
       - key: COOKIE_SECURE
