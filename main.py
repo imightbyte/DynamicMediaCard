@@ -57,6 +57,10 @@ X_CLIENT_SECRET = os.getenv("X_CLIENT_SECRET", "")
 X_REDIRECT_URI = os.getenv("X_REDIRECT_URI", "http://127.0.0.1:8000/callback")
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 
+# Send session cookies only over HTTPS in production. Off by default so local
+# development over http://localhost still works.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+
 if not SECRET_KEY or len(SECRET_KEY) < 16:
     SECRET_KEY = "dev-insecure-change-me-" + secrets.token_hex(16)
 
@@ -102,7 +106,7 @@ MAX_VIDEO_UPLOAD_BYTES = 512 * 1024 * 1024        # 512 MB for videos/GIFs
 # In-memory dicts are still used as a cache for fast access.
 # --------------------------------------------------------------------------------------
 
-DB_PATH = "dynamic_media_card.db"
+DB_PATH = os.environ.get("DB_PATH", "dynamic_media_card.db")
 
 def get_db():
     # check_same_thread=False is safe here because a fresh connection is created
@@ -1869,6 +1873,8 @@ app.add_middleware(
     secret_key=SECRET_KEY,
     session_cookie="cardx_session",
     max_age=60 * 60 * 24 * 30,
+    same_site="lax",
+    https_only=COOKIE_SECURE,
 )
 
 templates = Jinja2Templates(directory="templates")
@@ -2128,7 +2134,7 @@ async def callback(
         request.session.pop("oauth1_request_token_secret", None)
 
         resp = RedirectResponse("/")
-        resp.set_cookie("session", create_session_cookie(xuid), httponly=True, samesite="lax", max_age=60*60*24*90, path="/")
+        resp.set_cookie("session", create_session_cookie(xuid), httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=60*60*24*90, path="/")
         return resp
 
     # Legacy OAuth2 path (still supported for non-Ads flows)
@@ -2189,7 +2195,7 @@ async def callback(
     persist_token(xuid, TOKENS[xuid])
 
     resp = RedirectResponse("/")
-    resp.set_cookie("session", create_session_cookie(xuid), httponly=True, samesite="lax", max_age=60*60*24*90, path="/")
+    resp.set_cookie("session", create_session_cookie(xuid), httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=60*60*24*90, path="/")
     request.session.pop("pkce_verifier", None)
     request.session.pop("oauth_state", None)
     return resp
