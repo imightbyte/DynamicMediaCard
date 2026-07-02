@@ -14,11 +14,14 @@ import base64
 import copy
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
 import secrets
+import socket
 import sqlite3
+import threading
 import time
 import math
 from datetime import datetime, timedelta, timezone
@@ -27,9 +30,9 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.date import DateTrigger
 from cryptography.fernet import Fernet
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeSerializer
@@ -81,8 +84,18 @@ X_TWEETS_URL = "https://api.x.com/2/tweets"
 
 ADS_BASE = "https://ads-api.x.com/12"
 
-# Twitter API v1.1 for verify credentials (useful after OAuth1)
-X_VERIFY_CREDENTIALS_URL = "https://api.twitter.com/1.1/account/verify_credentials.json"
+# Media upload host (NOT ads-api). Uses the X API v2 chunked upload endpoints
+# (dedicated initialize/append/finalize routes; the old `command=` query flow and
+# the v1.1 upload.twitter.com endpoint were sunset in 2025). Same OAuth1.0a user context.
+X_UPLOAD_BASE = "https://api.x.com/2/media/upload"
+UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024  # ~4MB per APPEND segment (X recommends <=5MB)
+
+# Upload size caps (roughly aligned with X media constraints) to prevent a huge upload
+# from exhausting memory/disk. Images are small; videos/GIFs get a larger cap.
+MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024          # 5 MB for images
+MAX_VIDEO_UPLOAD_BYTES = 512 * 1024 * 1024        # 512 MB for videos/GIFs
+
+# (v1.1 verify_credentials no longer used; profile fetched via /2/users/me with OAuth1 signing)
 
 # --------------------------------------------------------------------------------------
 # Persistence (SQLite for schedules + tokens so cron jobs survive restarts)
@@ -92,8 +105,14 @@ X_VERIFY_CREDENTIALS_URL = "https://api.twitter.com/1.1/account/verify_credentia
 DB_PATH = "dynamic_media_card.db"
 
 def get_db():
+    # check_same_thread=False is safe here because a fresh connection is created
+    # per call (never shared across threads). WAL + busy_timeout reduce
+    # "database is locked" errors when the scheduler thread and request threads
+    # touch the DB concurrently.
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
     return conn
 
 def init_db():
@@ -148,6 +167,13 @@ def init_db():
             scope TEXT
         )
     """)
+    # NOTE: Public profile fields (username/name/profile_image_url) are intentionally
+    # NOT persisted (PII-free at rest). They are held only in the in-memory USERS cache
+    # and re-fetched from X on demand (see rehydrate_user) after a restart.
+    # Indexes for the hot queries (schedule listing / recovery scans, token lookups).
+    c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_user_id ON schedules(user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_x_user_id ON tokens(x_user_id)")
     conn.commit()
     conn.close()
 
@@ -246,6 +272,11 @@ TOKENS: Dict[str, Dict[str, Any]] = {}
 SCHEDULES: Dict[int, Dict[str, Any]] = {}
 _SCHEDULE_COUNTER = 0
 
+# A schedule that has been "running" longer than this is considered a stale/orphaned
+# run (process interrupted before it could record a terminal status). The list endpoint
+# self-heals such rows to "failed" so the frontend running-poller can stop.
+STALE_RUNNING_SECONDS = 600
+
 def next_schedule_id() -> int:
     global _SCHEDULE_COUNTER
     _SCHEDULE_COUNTER += 1
@@ -269,6 +300,21 @@ def decrypt(token: str) -> str:
         return FERNET.decrypt(token.encode()).decode()
     except Exception:
         return ""
+
+def _safe_decrypt(value: str) -> str:
+    """Decrypt a stored secret, tolerating legacy PLAINTEXT rows.
+
+    OAuth1 secrets (oauth_token / oauth_token_secret) are now encrypted at rest, but
+    rows written before this change hold raw plaintext that isn't valid Fernet
+    ciphertext. Unlike decrypt() (which returns "" on failure), this returns the value
+    unchanged so those legacy rows keep working; they get re-encrypted on next login.
+    """
+    if not value:
+        return ""
+    try:
+        return FERNET.decrypt(value.encode()).decode()
+    except Exception:
+        return value
 
 # --------------------------------------------------------------------------------------
 # OAuth 1.0a helpers (for X Ads API and also usable for X API v2 user context)
@@ -351,43 +397,79 @@ def get_oauth1_headers(method: str, url: str, user: dict, extra_params: dict | N
 def create_session_cookie(x_user_id: str) -> str:
     return signer.dumps({"xuid": x_user_id})
 
-def get_user_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
+def _xuid_from_cookie(request: Request) -> Optional[str]:
     raw = request.cookies.get("session")
     if not raw:
         return None
     try:
         data = signer.loads(raw)
-        xuid = data.get("xuid")
-        if not xuid:
-            return None
-        profile = USERS.get(xuid)
-        if not profile:
-            return None
-        tok = TOKENS.get(xuid, {})
-        user = {
-            "id": xuid,
-            "x_user_id": xuid,
-            "username": profile.get("username"),
-            "name": profile.get("name"),
-            "profile_image_url": profile.get("profile_image_url"),
-            # OAuth2 style (legacy)
-            "access_token": decrypt(tok.get("access_token", "")),
-            "refresh_token": decrypt(tok.get("refresh_token", "")),
-            # OAuth1 (preferred for Ads)
-            "oauth_token": tok.get("oauth_token") or decrypt(tok.get("access_token", "")),
-            "oauth_token_secret": tok.get("oauth_token_secret", ""),
-            "expires_at": tok.get("expires_at", 0),
-            "scope": tok.get("scope"),
-        }
-        return user
     except BadSignature:
         return None
+    return data.get("xuid") or None
+
+def _build_user_dict(xuid: str) -> Dict[str, Any]:
+    """Build the runtime user dict. TOKENS holds encrypted values (both OAuth1 and
+    OAuth2); we decrypt here so the returned dict carries PLAINTEXT secrets suitable
+    for signing helpers / API calls. _safe_decrypt tolerates legacy plaintext rows."""
+    profile = USERS.get(xuid, {})
+    tok = TOKENS.get(xuid, {})
+    return {
+        "id": xuid,
+        "x_user_id": xuid,
+        "username": profile.get("username"),
+        "name": profile.get("name"),
+        "profile_image_url": profile.get("profile_image_url"),
+        # OAuth2 style (legacy)
+        "access_token": decrypt(tok.get("access_token", "")),
+        "refresh_token": decrypt(tok.get("refresh_token", "")),
+        # OAuth1 (preferred for Ads) — decrypt at point of use
+        "oauth_token": _safe_decrypt(tok.get("oauth_token")) or decrypt(tok.get("access_token", "")),
+        "oauth_token_secret": _safe_decrypt(tok.get("oauth_token_secret")),
+        "expires_at": tok.get("expires_at", 0),
+        "scope": tok.get("scope"),
+    }
+
+def get_user_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
+    """Synchronous cookie->user lookup from the in-memory caches (no network).
+    Returns None on cache-miss; callers that must survive a restart use the async
+    rehydrate_user() instead."""
+    xuid = _xuid_from_cookie(request)
+    if not xuid:
+        return None
+    if xuid not in USERS:
+        return None
+    return _build_user_dict(xuid)
 
 def clear_session_cookie(response: Response):
     response.delete_cookie("session", path="/")
 
+async def rehydrate_user(request: Request) -> Optional[Dict[str, Any]]:
+    """Resolve the session cookie to a user, re-fetching the public profile from X
+    on cache-miss. Profile PII is no longer persisted, so after a restart USERS is
+    empty; if a persisted token exists we re-fetch the profile and cache it IN MEMORY
+    ONLY (never persisted). On re-fetch failure we degrade gracefully to a minimal
+    user dict (id + tokens) so a valid session isn't hard-broken, and we don't cache
+    the miss so a later request can retry."""
+    xuid = _xuid_from_cookie(request)
+    if not xuid or xuid not in TOKENS:
+        return None
+    if xuid not in USERS:
+        base = _build_user_dict(xuid)
+        try:
+            profile = await fetch_x_profile(base)
+            USERS[xuid] = {
+                "x_user_id": xuid,
+                "username": profile.get("username"),
+                "name": profile.get("name"),
+                "profile_image_url": profile.get("profile_image_url"),
+            }
+        except Exception as e:
+            print(f"[rehydrate_user] profile re-fetch failed for {xuid}: {e!r}")
+            return base
+    return _build_user_dict(xuid)
+
 async def require_user(request: Request) -> Dict[str, Any]:
-    user = get_user_from_cookie(request)
+    user = await rehydrate_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
@@ -479,6 +561,237 @@ async def ads_put(path: str, access_token: str, payload: Dict[str, Any], oauth_t
             raise HTTPException(status_code=r.status_code, detail=f"Ads update failed: {detail}")
         return r.json() if r.text else {"ok": True}
 
+async def ads_post(path: str, access_token: str, params: Optional[Dict] = None, oauth_token_secret: Optional[str] = None) -> Dict[str, Any]:
+    """Ads API POST — OAuth1 user context.
+
+    Like the Ads media_library "add" call, parameters are sent as the query string
+    (not a JSON/form body), so they ARE part of the OAuth signature base string,
+    exactly like the ads_get query params.
+    """
+    url = f"{ADS_BASE}{path}"
+    query_params = params or {}
+    if oauth_token_secret:
+        headers = {
+            "Authorization": make_oauth1_header(
+                "POST", url, X_CONSUMER_KEY, X_CONSUMER_SECRET, access_token, oauth_token_secret,
+                extra_params=query_params
+            )
+        }
+    else:
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, headers=headers, params=query_params)
+        if r.status_code in (401, 403):
+            try:
+                detail = r.json()
+            except Exception:
+                detail = r.text or r.content.decode(errors="ignore") or "(no body)"
+            raise HTTPException(status_code=r.status_code, detail=f"Ads API error (HTTP {r.status_code} on {path}): {detail}")
+        if r.status_code >= 400:
+            try:
+                detail = r.json()
+            except Exception:
+                detail = r.text
+            raise HTTPException(status_code=r.status_code, detail=f"Ads POST failed (HTTP {r.status_code} on {path}): {detail}")
+        return r.json() if r.text else {"ok": True}
+
+# --------------------------------------------------------------------------------------
+# Media upload helpers (X API v2 chunked upload — different host than the Ads API)
+#
+# SIGNING SUBTLETY (OAuth1.0a):
+#   - INIT sends a JSON body and APPEND sends multipart/form-data. For OAuth1, neither
+#     a JSON body nor multipart form fields (including the binary `media` part and the
+#     `segment_index` field) are included in the signature base string. Only the
+#     oauth_* params (plus any genuine query-string params, e.g. STATUS's media_id)
+#     are signed. So we call make_oauth1_header WITHOUT extra_params for
+#     INIT/APPEND/FINALIZE, and WITH extra_params only for the STATUS GET.
+# --------------------------------------------------------------------------------------
+
+def _upload_auth_header(method: str, url: str, access_token: str, oauth_token_secret: str, extra_params: Optional[Dict] = None) -> str:
+    return make_oauth1_header(
+        method, url, X_CONSUMER_KEY, X_CONSUMER_SECRET, access_token, oauth_token_secret,
+        extra_params=extra_params,
+    )
+
+def _raise_upload_error(r: httpx.Response, step: str):
+    try:
+        detail = r.json()
+    except Exception:
+        detail = r.text or "(no body)"
+    raise HTTPException(status_code=r.status_code, detail=f"Media upload {step} failed (HTTP {r.status_code}): {detail}")
+
+def _categorize_upload(mime: str, filename: str) -> Tuple[str, str, str]:
+    """Return (media_category, app_media_type, mime) for the Ads/X upload.
+
+    app_media_type follows the app convention where GIF counts as "video"
+    (consistent with _normalize_media_type).
+    """
+    m = (mime or "").lower()
+    fn = (filename or "").lower()
+    if "gif" in m or fn.endswith(".gif"):
+        return "TWEET_GIF", "video", (m or "image/gif")
+    if m.startswith("image/") or fn.endswith((".jpg", ".jpeg", ".png", ".webp")):
+        return "TWEET_IMAGE", "image", (m or "image/jpeg")
+    if m.startswith("video/") or fn.endswith((".mp4", ".mov", ".m4v", ".webm")):
+        # AMPLIFY_VIDEO is the correct category for videos used in Ads creatives.
+        return "AMPLIFY_VIDEO", "video", (m or "video/mp4")
+    raise HTTPException(422, detail="Unsupported file type. Please upload an image, GIF, or video.")
+
+async def _media_upload_chunked(
+    client: httpx.AsyncClient,
+    file: UploadFile,
+    access_token: str,
+    oauth_token_secret: str,
+    mime: str,
+    media_category: str,
+) -> Tuple[str, Optional[str], Dict[str, Any]]:
+    """Run INIT -> APPEND(chunks) -> FINALIZE. Returns (media_id, media_key, finalize_data)."""
+    raw = file.file  # underlying SpooledTemporaryFile (sync); avoids loading whole file in memory
+    raw.seek(0, os.SEEK_END)
+    total_bytes = raw.tell()
+    raw.seek(0)
+    if total_bytes <= 0:
+        raise HTTPException(422, detail="Uploaded file is empty.")
+
+    # Reject oversize uploads before streaming any bytes to X.
+    is_image = media_category == "TWEET_IMAGE"
+    max_bytes = MAX_IMAGE_UPLOAD_BYTES if is_image else MAX_VIDEO_UPLOAD_BYTES
+    if total_bytes > max_bytes:
+        limit_mb = max_bytes // (1024 * 1024)
+        kind = "image" if is_image else "video/GIF"
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {kind} uploads are limited to {limit_mb} MB.",
+        )
+
+    # --- INIT (JSON body; body not part of OAuth signature) ---
+    init_url = f"{X_UPLOAD_BASE}/initialize"
+    headers = {
+        "Authorization": _upload_auth_header("POST", init_url, access_token, oauth_token_secret),
+        "Content-Type": "application/json",
+    }
+    init_body = {"media_type": mime, "total_bytes": total_bytes, "media_category": media_category}
+    r = await client.post(init_url, headers=headers, json=init_body)
+    if r.status_code >= 400:
+        _raise_upload_error(r, "init")
+    init_data = (r.json() or {}).get("data") or r.json() or {}
+    media_id = str(init_data.get("id") or init_data.get("media_id") or init_data.get("media_id_string") or "")
+    media_key = init_data.get("media_key")
+    if not media_id:
+        raise HTTPException(502, detail=f"Media upload INIT did not return a media id: {init_data}")
+
+    # --- APPEND (multipart; neither `media` nor `segment_index` are signed) ---
+    append_url = f"{X_UPLOAD_BASE}/{media_id}/append"
+    segment_index = 0
+    while True:
+        chunk = raw.read(UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        headers = {"Authorization": _upload_auth_header("POST", append_url, access_token, oauth_token_secret)}
+        files = {"media": ("blob", chunk, "application/octet-stream")}
+        data = {"segment_index": str(segment_index)}
+        r = await client.post(append_url, headers=headers, data=data, files=files)
+        if r.status_code >= 400:
+            _raise_upload_error(r, f"append (segment {segment_index})")
+        segment_index += 1
+
+    # --- FINALIZE (no body) ---
+    finalize_url = f"{X_UPLOAD_BASE}/{media_id}/finalize"
+    headers = {"Authorization": _upload_auth_header("POST", finalize_url, access_token, oauth_token_secret)}
+    r = await client.post(finalize_url, headers=headers)
+    if r.status_code >= 400:
+        _raise_upload_error(r, "finalize")
+    fin = r.json() if r.text else {}
+    fin_data = (fin.get("data") or fin) if isinstance(fin, dict) else {}
+    media_key = media_key or fin_data.get("media_key")
+    return media_id, media_key, fin_data
+
+async def _poll_upload_status(
+    client: httpx.AsyncClient,
+    media_id: str,
+    access_token: str,
+    oauth_token_secret: str,
+    max_wait: float = 90.0,
+) -> Tuple[str, Dict[str, Any]]:
+    """Poll STATUS until succeeded/failed or max_wait elapses.
+
+    Returns (state, data) where state is one of "succeeded" | "failed" | "processing".
+    STATUS is a GET with a real query param (media_id), so it IS part of the signature.
+    """
+    deadline = time.time() + max_wait
+    last: Dict[str, Any] = {}
+    while True:
+        params = {"media_id": media_id}
+        headers = {"Authorization": _upload_auth_header("GET", X_UPLOAD_BASE, access_token, oauth_token_secret, extra_params=params)}
+        r = await client.get(X_UPLOAD_BASE, headers=headers, params=params)
+        if r.status_code >= 400:
+            _raise_upload_error(r, "status")
+        d = r.json() if r.text else {}
+        data = (d.get("data") or d) if isinstance(d, dict) else {}
+        last = data
+        pinfo = data.get("processing_info") or {}
+        state = (pinfo.get("state") or "").lower()
+        if not pinfo or state == "succeeded":
+            return "succeeded", data
+        if state == "failed":
+            return "failed", data
+        if time.time() >= deadline:
+            return "processing", data
+        wait_secs = int(pinfo.get("check_after_secs") or 3)
+        await asyncio.sleep(max(1.0, min(float(wait_secs), deadline - time.time())))
+
+def _map_library_status(raw_status: Optional[str]) -> str:
+    """Map an Ads media_library media_status to processing|succeeded|failed."""
+    s = (raw_status or "").upper()
+    if "FAIL" in s or "ERROR" in s:
+        return "failed"
+    if any(tok in s for tok in ("PROGRESS", "PENDING", "PROCESS", "TRANSCOD")) and "COMPLET" not in s:
+        return "processing"
+    # ACTIVE / READY / SUCCEEDED / COMPLETED / TRANSCODE_COMPLETED / empty -> ready
+    return "succeeded"
+
+def _normalize_library_item(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize one Ads media_library entry to the frontend contract shape."""
+    if not isinstance(m, dict):
+        m = {}
+    app_type = _normalize_media_type(m) or "image"
+    thumbnail = None
+    if app_type == "image":
+        thumbnail = m.get("media_url") or m.get("media_url_https") or m.get("poster_media_url")
+    else:
+        thumbnail = m.get("poster_media_url") or m.get("video_poster_url") or m.get("media_url")
+    return {
+        "media_key": m.get("media_key") or m.get("id") or "",
+        "media_type": app_type,
+        "name": m.get("name") or m.get("title") or m.get("file_name") or "",
+        "file_name": m.get("file_name") or m.get("name") or "",
+        "created_at": m.get("created_at"),
+        "media_status": _map_library_status(m.get("media_status") or m.get("status")),
+        "thumbnail": thumbnail,
+        "aspect_ratio": _extract_api_aspect(m),
+    }
+
+def _encode_cursor(cursors: Dict[str, str]) -> Optional[str]:
+    if not cursors:
+        return None
+    return base64.urlsafe_b64encode(json.dumps(cursors).encode()).decode()
+
+def _decode_cursor(cursor: Optional[str]) -> Dict[str, str]:
+    """Decode our composite cursor (used so VIDEO+GIF can paginate together).
+
+    Falls back to treating the value as a single raw API cursor if it isn't ours.
+    """
+    if not cursor:
+        return {}
+    try:
+        obj = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        if isinstance(obj, dict):
+            return {str(k): str(v) for k, v in obj.items() if v}
+    except Exception:
+        pass
+    return {"_raw": cursor}
+
 async def refresh_x_token_if_needed(user: Dict[str, Any]) -> str:
     """Return a usable token.
 
@@ -557,29 +870,28 @@ async def fetch_x_user(access_token: str) -> Dict[str, Any]:
     }
 
 async def fetch_user_oauth1(oauth_token: str, oauth_token_secret: str) -> Dict[str, Any]:
-    """OAuth1 path — calls v1.1 verify_credentials (very reliable after 3-legged OAuth1)."""
-    url = X_VERIFY_CREDENTIALS_URL
-    params = {"skip_status": "true", "include_email": "false"}
-    # IMPORTANT: include query params in the OAuth1 signature
-    headers = {
-        "Authorization": make_oauth1_header(
-            "GET", url, X_CONSUMER_KEY, X_CONSUMER_SECRET, oauth_token, oauth_token_secret,
-            extra_params=params
-        )
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(url, headers=headers, params=params)
-        if r.status_code != 200:
-            body = r.text or r.content.decode(errors="ignore") or "(no body)"
-            print(f"[OAuth1] verify_credentials failed: HTTP {r.status_code} body={body[:500]}")
-            raise Exception(f"verify_credentials HTTP {r.status_code}: {body[:200]}")
-        data = r.json()
+    """OAuth1 path — fetch profile using the same v2 /users/me endpoint (with OAuth1 signing)."""
+    params = {"user.fields": "id,username,name,profile_image_url"}
+    data = await x_get(X_USERS_ME_URL, oauth_token, params, oauth_token_secret=oauth_token_secret)
+    u = data.get("data", {})
     return {
-        "x_user_id": str(data.get("id")),
-        "username": data.get("screen_name"),
-        "name": data.get("name"),
-        "profile_image_url": data.get("profile_image_url"),
+        "x_user_id": str(u.get("id") or u.get("x_user_id") or ""),
+        "username": u.get("username"),
+        "name": u.get("name"),
+        "profile_image_url": u.get("profile_image_url"),
     }
+
+async def fetch_x_profile(user: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch a user's public profile from X, dispatching on token type.
+
+    Accepts a runtime user dict (with decrypted tokens). Used to rehydrate the
+    in-memory USERS cache on demand since profile PII is no longer persisted.
+    """
+    secret = user.get("oauth_token_secret") or ""
+    if secret:
+        return await fetch_user_oauth1(user.get("oauth_token") or "", secret)
+    access = await refresh_x_token_if_needed(user)
+    return await fetch_x_user(access)
 
 # --------------------------------------------------------------------------------------
 # Card / Tweet helpers + media type detection
@@ -1059,8 +1371,8 @@ async def fetch_media_info(access_token: str, ads_account_id: str, media_id: str
                 "aspect_ratio": api_ar,
                 "aspect": _aspect_float(w, h) if (api_ar is None and w and h) else None,
             }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[media-info] primary lookup failed for media_id={media_id}: {e!r}")
 
     # Fallback 1: list-style media_library with query param (older style)
     try:
@@ -1106,8 +1418,8 @@ async def fetch_media_info(access_token: str, ads_account_id: str, media_id: str
                 "aspect_ratio": api_ar,
                 "aspect": _aspect_float(w, h) if (api_ar is None and w and h) else None,
             }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[media-info] fallback media_library query failed for media_id={media_id}: {e!r}")
 
     # Fallback 2: /media list
     try:
@@ -1154,8 +1466,8 @@ async def fetch_media_info(access_token: str, ads_account_id: str, media_id: str
                 "aspect_ratio": api_ar,
                 "aspect": _aspect_float(w, h) if (api_ar is None and w and h) else None,
             }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[media-info] fallback /media list failed for media_id={media_id}: {e!r}")
 
     return {"width": None, "height": None, "preview": None, "media_type": None, "aspect_ratio": None, "aspect": None}
 
@@ -1294,47 +1606,143 @@ def _extract_api_aspect(m: Dict[str, Any]) -> Optional[str]:
     return None
 
 # --------------------------------------------------------------------------------------
-# Scheduler (in-memory)
+# Scheduler — date-triggered, not polling
+# --------------------------------------------------------------------------------------
+# Each pending schedule gets exactly one APScheduler job that fires at scheduled_at.
+# No background polling loop; the scheduler thread is idle until a job is due.
+# On server restart, start_scheduler() re-adds jobs from the DB so nothing is missed.
 # --------------------------------------------------------------------------------------
 
 scheduler: Optional[BackgroundScheduler] = None
 
+# Serializes the read-guard-and-set-to-"running" transition in execute_card_update so a
+# DateTrigger job and a manual "Run now" cannot both pass the guard and double-execute.
+_execute_lock = threading.Lock()
+
+def _sched_job_id(sid: int) -> str:
+    return f"sched-{sid}"
+
+def _run_schedule_job(sid: int):
+    """Called by APScheduler in its worker thread when a scheduled time is reached."""
+    rec = SCHEDULES.get(sid)
+    if not rec:
+        return
+    try:
+        asyncio.run(execute_card_update(rec))
+    except Exception as e:
+        print(f"[scheduler] execute_card_update failed for schedule {sid}: {e}")
+
+def add_schedule_job(rec: Dict[str, Any]):
+    """Register a DateTrigger job for a pending schedule. Safe to call multiple times (replace_existing)."""
+    if not scheduler or not scheduler.running:
+        return
+    sid = int(rec["id"])
+    scheduled_at = rec.get("scheduled_at") or 0
+    run_date = datetime.fromtimestamp(scheduled_at, tz=timezone.utc)
+    # If already past-due (e.g. created with a past time), fire almost immediately.
+    now_utc = datetime.now(timezone.utc)
+    if run_date <= now_utc:
+        run_date = now_utc + timedelta(seconds=1)
+    scheduler.add_job(
+        _run_schedule_job,
+        trigger=DateTrigger(run_date=run_date),
+        id=_sched_job_id(sid),
+        replace_existing=True,
+        args=[sid],
+    )
+    print(f"[scheduler] job scheduled for sid={sid} at {run_date.isoformat()}")
+
+def remove_schedule_job(sid: int):
+    """Cancel the APScheduler job for a schedule (used on cancel or Run Now)."""
+    if not scheduler or not scheduler.running:
+        return
+    job_id = _sched_job_id(sid)
+    try:
+        scheduler.remove_job(job_id)
+        print(f"[scheduler] removed job for sid={sid}")
+    except Exception:
+        pass  # job may have already fired or never existed
+
 def start_scheduler(app: FastAPI):
+    # IMPORTANT — SINGLE-WORKER ONLY.
+    # SCHEDULES (in-memory), the module-level `scheduler`, and _execute_lock are all
+    # per-process state. This app MUST run with a single worker process
+    # (e.g. `uvicorn main:app` WITHOUT `--workers N` and WITHOUT gunicorn multi-worker).
+    # Running multiple workers would give each process its own scheduler + in-memory
+    # dicts and its own lock, so every schedule would be registered and executed once
+    # per worker (duplicate card updates) and cross-process guards would not hold.
     global scheduler
     if scheduler and scheduler.running:
         return
     scheduler = BackgroundScheduler(timezone="UTC")
-    scheduler.add_job(
-        poll_and_execute_due_schedules,
-        trigger=IntervalTrigger(seconds=20),
-        id="cardxploder-poller",
-        replace_existing=True,
-        max_instances=1,
-    )
     scheduler.start()
-    scheduler.add_job(poll_and_execute_due_schedules, trigger="date", run_date=datetime.now(timezone.utc) + timedelta(seconds=5))
 
-def poll_and_execute_due_schedules():
-    now = time.time()
-    due = [
-        s for s in SCHEDULES.values()
-        if s.get("status") == "pending" and s.get("scheduled_at", 0) <= now
-    ]
-    due.sort(key=lambda x: x.get("scheduled_at", 0))
-    for s in due[:10]:
-        try:
-            # BackgroundScheduler runs this in a worker thread with no running loop,
-            # so asyncio.run() is the correct and safe way to run the async job.
-            asyncio.run(execute_card_update(s))
-        except Exception as e:
-            print(f"[scheduler] execute_card_update failed for schedule {s.get('id')}: {e}")
+    now_ts = time.time()
 
-async def execute_card_update(schedule: Dict[str, Any]):
+    # --- Recover schedules left "running" from a previous crash/restart ---
+    # A "running" row means a prior process began the update but the process died before
+    # it could record success/failure. Since a one-shot card update may have already
+    # partially applied on X's side, re-running is risky. We therefore mark these
+    # "failed" with a clear message rather than silently re-executing.
+    conn = get_db()
+    stuck_rows = conn.execute("SELECT * FROM schedules WHERE status = 'running'").fetchall()
+    for row in stuck_rows:
+        rec = dict(row)
+        sid = int(rec["id"])
+        rec["status"] = "failed"
+        rec["result"] = "Interrupted by server restart. Please review the card and re-schedule if needed."
+        rec["executed_at"] = now_ts
+        SCHEDULES[sid] = rec
+        persist_schedule(rec)
+        print(f"[scheduler] recovered stuck-running sid={sid} -> failed")
+
+    # On startup: recover any pending schedules from DB.
+    # Past-due ones run immediately (in a background thread); future ones get a DateTrigger job.
+    rows = conn.execute("SELECT * FROM schedules WHERE status = 'pending'").fetchall()
+    conn.close()
+    for row in rows:
+        rec = dict(row)
+        sid = int(rec["id"])
+        SCHEDULES.setdefault(sid, rec)  # hydrate memory if not already there
+        if (rec.get("scheduled_at") or 0) <= now_ts:
+            # Already past-due — run shortly after startup.
+            run_date = datetime.now(timezone.utc) + timedelta(seconds=2)
+            scheduler.add_job(
+                _run_schedule_job,
+                trigger=DateTrigger(run_date=run_date),
+                id=_sched_job_id(sid),
+                replace_existing=True,
+                args=[sid],
+            )
+            print(f"[scheduler] past-due sid={sid} queued for immediate execution")
+        else:
+            add_schedule_job(rec)
+
+async def execute_card_update(schedule: Dict[str, Any], force: bool = False):
     sid = schedule["id"]
     sched = SCHEDULES.get(sid)
-    if not sched or sched.get("status") != "pending":
+    if not sched:
         return
-    sched["status"] = "running"
+
+    # --- Atomic guard: read-status-and-set-to-"running" under a lock ---
+    # A DateTrigger job (scheduler thread) and a manual "Run now" (request thread) can
+    # fire concurrently. Evaluating the guards and flipping to "running" inside the lock
+    # guarantees only one caller wins the transition; the loser returns immediately.
+    # Only the transition is locked — the actual network update runs outside the lock.
+    with _execute_lock:
+        current_status = sched.get("status")
+        # Never stack a second concurrent execution — if already running, let it finish.
+        if current_status == "running":
+            return
+        # Cancelled schedules are never re-run (even via Run Now).
+        if current_status == "cancelled":
+            return
+        # Background scheduler only picks up pending; manual Run Now (force=True) can re-run completed/failed too.
+        if not force and current_status != "pending":
+            return
+        sched["status"] = "running"
+        sched["started_at"] = time.time()
+
     persist_schedule(sched)
 
     try:
@@ -1343,15 +1751,8 @@ async def execute_card_update(schedule: Dict[str, Any]):
         if not tok:
             raise RuntimeError("User tokens not found for schedule")
 
-        user = {
-            "id": xuid,
-            "x_user_id": xuid,
-            "access_token": decrypt(tok.get("access_token", "")),
-            "refresh_token": decrypt(tok.get("refresh_token", "")),
-            "oauth_token": tok.get("oauth_token") or decrypt(tok.get("access_token", "")),
-            "oauth_token_secret": tok.get("oauth_token_secret", ""),
-            "expires_at": tok.get("expires_at", 0),
-        }
+        # Decrypts OAuth1/OAuth2 secrets at point of use (tolerates legacy plaintext).
+        user = _build_user_dict(xuid)
 
         # Use the caller's running event loop directly (no manual new_event_loop).
         # This works whether called via "await" from the API or via asyncio.run() from the scheduler thread.
@@ -1447,6 +1848,16 @@ async def execute_card_update(schedule: Dict[str, Any]):
             sched["result"] = str(exc)[:4000]
             sched["executed_at"] = time.time()
             persist_schedule(sched)
+    finally:
+        # Guarantee a terminal state: if execution exited without recording a
+        # completed/failed status (e.g. a BaseException or a killed reload), the row
+        # would otherwise be stuck "running" forever. Only write if not already terminal.
+        final = SCHEDULES.get(sid)
+        if final is not None and final.get("status") == "running":
+            final["status"] = "failed"
+            final["result"] = "Execution ended without completing"
+            final["executed_at"] = time.time()
+            persist_schedule(final)
 
 # --------------------------------------------------------------------------------------
 # FastAPI app + templates
@@ -1500,10 +1911,62 @@ class ScheduleIn(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    user = get_user_from_cookie(request)
+    # Use the async rehydrate path so a valid session still renders logged-in after a
+    # restart (profile PII is re-fetched from X on cache-miss, in memory only).
+    user = await rehydrate_user(request)
+    preferred_ads_account_id = ""
+    initial_schedules = []
+    if user:
+        try:
+            conn = get_db()
+            row = conn.execute(
+                "SELECT ads_account_id FROM schedules WHERE user_id = ? AND ads_account_id IS NOT NULL AND ads_account_id != '' ORDER BY id DESC LIMIT 1",
+                (user["id"],)
+            ).fetchone()
+            if row:
+                preferred_ads_account_id = row[0] or ""
+            # Load previous schedules for immediate display after login (light version with basic "changes").
+            # No automatic client fetch on page load. The list is only refreshed on explicit user Refresh
+            # or after the user performs a mutating action (save/cancel/run).
+            rows = conn.execute(
+                "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
+                (user["id"],)
+            ).fetchall()
+            initial_schedules = [dict(r) for r in rows]
+            # Attach basic changes so the "Will change / Changed" lines appear right away in the seeded list.
+            def _light_changes(r):
+                out = []
+                if (r.get("new_title") or "") != (r.get("original_title") or ""):
+                    out.append('title: "' + (r.get("original_title") or "") + '" → "' + (r.get("new_title") or "") + '"')
+                if (r.get("new_media_id") or "") != (r.get("original_media_id") or ""):
+                    out.append('media key: ' + (r.get("original_media_id") or "") + ' → ' + (r.get("new_media_id") or ""))
+                if (r.get("new_url") or "") != (r.get("original_url") or ""):
+                    out.append('url → ' + (r.get("new_url") or ""))
+                if r.get("new_media_type") and r.get("new_media_type") != r.get("original_media_type"):
+                    out.append('type: ' + (r.get("original_media_type") or "?") + ' → ' + r.get("new_media_type"))
+                return out
+            for rec in initial_schedules:
+                rec["changes"] = _light_changes(rec)
+            # Basic client-friendly order: pending soonest first, then recently executed.
+            def _exec_key(r):
+                return (r.get("executed_at") or 0, r.get("created_at") or 0, r.get("scheduled_at") or 0)
+            pending = [r for r in initial_schedules if (r.get("status") or "pending") == "pending"]
+            pending.sort(key=lambda r: r.get("scheduled_at") or 0)
+            others = [r for r in initial_schedules if (r.get("status") or "pending") != "pending"]
+            others.sort(key=_exec_key, reverse=True)
+            initial_schedules = pending + others
+            conn.close()
+        except Exception:
+            initial_schedules = []
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "user": user, "x_redirect_uri": X_REDIRECT_URI},
+        {
+            "request": request,
+            "user": user,
+            "x_redirect_uri": X_REDIRECT_URI,
+            "preferred_ads_account_id": preferred_ads_account_id,
+            "initial_schedules": initial_schedules,
+        },
     )
 
 @app.get("/login")
@@ -1617,31 +2080,43 @@ async def callback(
         if not access_token or not access_token_secret:
             return RedirectResponse("/?error=bad_oauth1_token")
 
-        print("[OAuth1] Access token exchange succeeded. Now fetching profile via verify_credentials...")
+        print("[OAuth1] Access token exchange succeeded. Now fetching profile via /2/users/me...")
 
-        # Fetch profile using the new OAuth1 token (v1.1 endpoint works great for this)
+        # Fetch profile using the new OAuth1 token (via v2 /users/me with OAuth1 signing)
         try:
             profile = await fetch_user_oauth1(access_token, access_token_secret)
         except Exception as e:
-            print("[OAuth1] profile fetch failed:", repr(e))
-            # Include a bit of the error in the URL so the UI can show it
+            # Try to extract raw response body for better diagnostics (e.g. 215 Bad Authentication data)
+            body = ""
+            try:
+                if hasattr(e, "response") and e.response is not None:
+                    body = e.response.text[:300]
+                elif hasattr(e, "detail"):
+                    body = str(e.detail)[:300]
+            except Exception:
+                pass
+            print("[OAuth1] profile fetch failed:", repr(e), "body:", body)
             err = "profile_fetch_failed"
             try:
-                err = "profile_fetch_failed:" + str(e)[:120]
+                detail = body or str(e)
+                err = "profile_fetch_failed:" + detail[:150]
             except Exception:
                 pass
             return RedirectResponse(f"/?error={err}")
 
         xuid = profile["x_user_id"]
+        # Profile PII lives in memory only (never persisted).
         USERS[xuid] = {
             "x_user_id": xuid,
             "username": profile["username"],
             "name": profile.get("name"),
             "profile_image_url": profile.get("profile_image_url"),
         }
+        # OAuth1 secrets are encrypted at rest (both in-memory and DB), matching the
+        # OAuth2 flow; they are decrypted at point of use in _build_user_dict.
         TOKENS[xuid] = {
-            "oauth_token": access_token,
-            "oauth_token_secret": access_token_secret,
+            "oauth_token": encrypt(access_token),
+            "oauth_token_secret": encrypt(access_token_secret),
             # No real expiry for typical OAuth1 user tokens; treat as long-lived
             "expires_at": time.time() + 365 * 24 * 3600,
             "scope": "oauth1",
@@ -1698,6 +2173,7 @@ async def callback(
         return RedirectResponse("/?error=profile_fetch_failed")
 
     xuid = profile["x_user_id"]
+    # Profile PII lives in memory only (never persisted).
     USERS[xuid] = {
         "x_user_id": xuid,
         "username": profile["username"],
@@ -1745,34 +2221,124 @@ async def api_me(user: Dict[str, Any] = Depends(get_user_from_cookie)):
 
 @app.get("/api/ads-accounts")
 async def api_ads_accounts(user: Dict[str, Any] = Depends(require_user)):
+    srv_id = f"s{int(time.time()*1000)%10000000}"
+    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    print(f"[ADS-ACCOUNTS] *********** ENDPOINT HIT srv_id={srv_id} ***********")
+    print(f"[ADS-ACCOUNTS] user in request: username={user.get('username')}, x_user_id={user.get('x_user_id') or user.get('id')}")
     access = await refresh_x_token_if_needed(user)
     granted_scopes = user.get("scope") or ""
     secret = user.get("oauth_token_secret", "")
+    print(f"[ADS-ACCOUNTS] Fetching accounts for user {user.get('username') or user.get('x_user_id')} using OAuth1 token (has_secret={bool(secret)}) srv_id={srv_id}")
     try:
         data = await ads_get("/accounts", access, {"count": 50}, oauth_token_secret=secret)
+        print(f"[ADS-ACCOUNTS] raw response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        print(f"[ADS-ACCOUNTS] RAW RESPONSE (truncated): {str(data)[:2000]}")
+        req_part = (data.get("request") or {}) if isinstance(data, dict) else {}
+        print(f"[ADS-ACCOUNTS] request part: {req_part}")
+        print(f"[ADS-ACCOUNTS] data['data'] (first 3): {(data.get('data') or [])[:3] if isinstance(data, dict) else 'N/A'}")
+        # Ads (and X) APIs sometimes return HTTP 200 + "errors" array for auth/permission issues
+        if isinstance(data, dict) and data.get("errors"):
+            errs = data.get("errors") or []
+            first = errs[0] if errs else {}
+            msg = first.get("message") or str(first) or "Unknown Ads API error"
+            code = first.get("code")
+            print(f"[ADS-ACCOUNTS] errors in response: {errs}")
+            return JSONResponse({
+                "accounts": [],
+                "error": f"{msg} (code {code})",
+                "granted_scopes": granted_scopes,
+                "srv_id": srv_id,
+                "raw": data
+            }, status_code=200)
         accounts = []
         for a in (data.get("data") or []):
-            accounts.append({
-                "id": a.get("id"),
-                "name": a.get("name") or a.get("business_name") or "",
-                "timezone": a.get("timezone"),
-            })
-        return {"accounts": accounts, "granted_scopes": granted_scopes}
+            # Support both "id" (standard for /accounts list) and "account_id"
+            aid = a.get("id") or a.get("account_id") if isinstance(a, dict) else None
+            if aid:
+                accounts.append({
+                    "id": aid,
+                    "name": (a.get("name") or a.get("business_name") or "") if isinstance(a, dict) else "",
+                    "timezone": a.get("timezone") if isinstance(a, dict) else None,
+                })
+        # Also harvest from the echoed "request"."params"."account_id" (user confirmed ads account lives here in responses)
+        try:
+            p = (req_part.get("params") or {}) if isinstance(req_part, dict) else {}
+            aid = p.get("account_id")
+            if aid:
+                if not any((ac.get("id") == aid) for ac in accounts):
+                    print(f"[ADS-ACCOUNTS] harvested account from request.params.account_id: {aid}")
+                    accounts.append({"id": aid, "name": "", "timezone": None})
+        except Exception as _e:
+            print(f"[ADS-ACCOUNTS] harvest error: {_e}")
+        print(f"[ADS-ACCOUNTS] found {len(accounts)} account(s) from live list")
+
+        # 1) Supplement with this user's previously scheduled ads accounts (so we can prepopulate even if /accounts list is empty for this token)
+        try:
+            xuid = user.get("x_user_id") or user.get("id") or ""
+            if xuid:
+                conn = get_db()
+                rows = conn.execute(
+                    "SELECT DISTINCT ads_account_id FROM schedules WHERE user_id = ? AND ads_account_id IS NOT NULL AND ads_account_id != '' ORDER BY id DESC",
+                    (xuid,)
+                ).fetchall()
+                for r in rows:
+                    aid = r["ads_account_id"] if "ads_account_id" in r.keys() else (r[0] if r else None)
+                    if aid and not any((ac.get("id") == aid) for ac in accounts):
+                        print(f"[ADS-ACCOUNTS] added previously used account from schedules: {aid}")
+                        accounts.append({"id": aid, "name": "(previously used)", "timezone": None})
+        except Exception as _e:
+            print(f"[ADS-ACCOUNTS] schedule history lookup error: {_e}")
+
+        # 2) Deep harvest any account_id or plausible ads account strings from the entire raw response
+        #    (the Ads API often echoes the account used under request.params.account_id in per-account calls)
+        def _deep_find_account_ids(o):
+            found = set()
+            def walk(x):
+                if isinstance(x, dict):
+                    for kk, vv in x.items():
+                        if kk in ("account_id", "ads_account_id") and isinstance(vv, str) and vv.strip():
+                            found.add(vv.strip())
+                        walk(vv)
+                elif isinstance(x, list):
+                    for item in x:
+                        walk(item)
+                elif isinstance(x, str):
+                    # match things like 18ce55ox1wa (starts with digit, alphanum, reasonable length)
+                    for m in re.finditer(r'\b([0-9][0-9a-zA-Z]{7,20})\b', x):
+                        cand = m.group(1)
+                        if 8 <= len(cand) <= 20:
+                            found.add(cand)
+            walk(o)
+            return list(found)
+
+        for aid in _deep_find_account_ids(data):
+            if not any((ac.get("id") == aid) for ac in accounts):
+                print(f"[ADS-ACCOUNTS] deep-harvested account id from raw response: {aid}")
+                accounts.append({"id": aid, "name": "", "timezone": None})
+
+        print(f"[ADS-ACCOUNTS] total accounts after supplements/harvest: {len(accounts)} srv_id={srv_id}")
+        print(f"[ADS-ACCOUNTS] >>> RETURNING accounts list: {accounts}")
+        print(f"[ADS-ACCOUNTS] >>> full payload summary: accounts_len={len(accounts)}, has_error={'error' in locals() or False} srv_id={srv_id}")
+        return {"accounts": accounts, "granted_scopes": granted_scopes, "srv_id": srv_id, "raw_request": req_part, "raw": data}
     except HTTPException as e:
-        return JSONResponse({"accounts": [], "error": str(e.detail), "granted_scopes": granted_scopes}, status_code=200)
+        print(f"[ADS-ACCOUNTS] HTTP error: {e.status_code} {e.detail} srv_id={srv_id}")
+        return JSONResponse({"accounts": [], "error": str(e.detail), "granted_scopes": granted_scopes, "srv_id": srv_id}, status_code=200)
+    except Exception as e:
+        print(f"[ADS-ACCOUNTS] unexpected error: {repr(e)} srv_id={srv_id}")
+        return JSONResponse({"accounts": [], "error": f"Unexpected error loading accounts: {e}", "granted_scopes": granted_scopes, "srv_id": srv_id}, status_code=200)
 
 @app.get("/api/check-ads-account/{ads_account_id}")
 async def api_check_ads_account(ads_account_id: str, user: Dict[str, Any] = Depends(require_user)):
-    """Lightweight endpoint to test access to a specific Ads account using the exact call the user suggested:
-    GET https://ads-api.x.com/12/accounts/{ads_account_id}
-    Returns a simple success/failure + the raw response from X (very useful for 403 debugging).
-    Also returns the scopes that were actually granted to the current OAuth token.
+    """Check the currently-authenticated user's access to a specific Ads account.
+    Uses: GET https://ads-api.x.com/12/accounts/{ads_account_id}/authenticated_user_access
+    This returns the permissions the signed-in X user has on that account (e.g. whether they can manage it).
+    Returns a simple ok/failure + the raw response. Useful for debugging 403s.
     """
     access = await refresh_x_token_if_needed(user)
     granted_scopes = user.get("scope") or ""
     secret = user.get("oauth_token_secret", "")
     try:
-        data = await ads_get(f"/accounts/{ads_account_id}", access, oauth_token_secret=secret)
+        data = await ads_get(f"/accounts/{ads_account_id}/authenticated_user_access", access, oauth_token_secret=secret)
         return {
             "ok": True,
             "ads_account_id": ads_account_id,
@@ -1924,7 +2490,7 @@ async def api_check_media(request: Request, user: Dict[str, Any] = Depends(requi
     new_media_id = (body.get("new_media_id") or "").strip()
 
     if not ads_account_id or not new_media_id:
-        return {"match": False, "error": "Missing account or media key"}
+        raise HTTPException(422, detail="Missing account or media key")
 
     access = await refresh_x_token_if_needed(user)
     secret = user.get("oauth_token_secret", "")
@@ -1955,7 +2521,7 @@ async def api_media_info(request: Request, user: Dict[str, Any] = Depends(requir
     media_id = (body.get("media_id") or "").strip()
 
     if not ads_account_id or not media_id:
-        return {"ok": False, "error": "Missing account or media key"}
+        raise HTTPException(422, detail="Missing account or media key")
 
     access = await refresh_x_token_if_needed(user)
     secret = user.get("oauth_token_secret", "")
@@ -1973,17 +2539,223 @@ async def api_media_info(request: Request, user: Dict[str, Any] = Depends(requir
     }
 
 
+@app.get("/api/media-library")
+async def api_media_library(
+    ads_account_id: str,
+    media_type: str,
+    cursor: Optional[str] = None,
+    count: int = 24,
+    q: Optional[str] = None,
+    user: Dict[str, Any] = Depends(require_user),
+):
+    """Browse the signed-in user's Ads media library, filtered by app media type.
+
+    media_type is the app-level value "image" or "video".
+      image -> IMAGE
+      video -> VIDEO + GIF (the app treats GIF as video; see _normalize_media_type)
+    """
+    app_type = (media_type or "").strip().lower()
+    if app_type not in ("image", "video"):
+        raise HTTPException(422, detail='media_type must be "image" or "video".')
+    if not ads_account_id:
+        raise HTTPException(422, detail="ads_account_id is required.")
+
+    api_types = ["IMAGE"] if app_type == "image" else ["VIDEO", "GIF"]
+    try:
+        count = max(1, min(int(count), 200))
+    except Exception:
+        count = 24
+
+    access = await refresh_x_token_if_needed(user)
+    secret = user.get("oauth_token_secret", "")
+
+    cursors = _decode_cursor(cursor)
+    items: List[Dict[str, Any]] = []
+    next_cursors: Dict[str, str] = {}
+
+    for t in api_types:
+        # On a follow-up page, only query the types that still have a cursor.
+        c = cursors.get(t) or (cursors.get("_raw") if len(api_types) == 1 else None)
+        if cursor and not c:
+            continue
+        params: Dict[str, Any] = {"media_type": t, "count": count}
+        if c:
+            params["cursor"] = c
+        data = await ads_get(f"/accounts/{ads_account_id}/media_library", access, params, oauth_token_secret=secret)
+        if isinstance(data, dict) and data.get("errors"):
+            errs = data.get("errors") or []
+            first = errs[0] if errs else {}
+            raise HTTPException(502, detail=first.get("message") or str(first) or "Ads media library error")
+        for m in (data.get("data") or []):
+            items.append(_normalize_library_item(m))
+        nc = data.get("next_cursor") if isinstance(data, dict) else None
+        if nc:
+            next_cursors[t] = nc
+
+    if q:
+        ql = q.strip().lower()
+        if ql:
+            items = [it for it in items if ql in (it.get("name") or "").lower() or ql in (it.get("file_name") or "").lower()]
+
+    # Most-recent first when created_at is available (merged VIDEO+GIF pages).
+    try:
+        items.sort(key=lambda it: it.get("created_at") or "", reverse=True)
+    except Exception:
+        pass
+
+    return {"ok": True, "items": items, "next_cursor": _encode_cursor(next_cursors)}
+
+
+@app.post("/api/media-upload")
+async def api_media_upload(
+    file: UploadFile = File(...),
+    ads_account_id: str = Form(...),
+    name: Optional[str] = Form(None),
+    user: Dict[str, Any] = Depends(require_user),
+):
+    """Upload a local file to the X media upload host (chunked, OAuth1-signed), then
+    register it in the Ads media library. Returns the same shape as /api/media-info.
+    """
+    if not ads_account_id:
+        raise HTTPException(422, detail="ads_account_id is required.")
+
+    file_name = (name or file.filename or "upload").strip()
+    media_category, app_media_type, mime = _categorize_upload(file.content_type or "", file.filename or file_name)
+
+    access = await refresh_x_token_if_needed(user)
+    secret = user.get("oauth_token_secret", "")
+
+    # Uploads need more than the default 30s (large videos + processing polls).
+    timeout = httpx.Timeout(connect=30.0, read=180.0, write=180.0, pool=30.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        media_id, media_key, fin_data = await _media_upload_chunked(
+            client, file, access, secret, mime, media_category
+        )
+
+        # Videos/GIFs return processing_info and need to transcode before they are usable.
+        state = "succeeded"
+        pinfo = fin_data.get("processing_info") if isinstance(fin_data, dict) else None
+        if pinfo and (pinfo.get("state") or "").lower() != "succeeded":
+            state, status_data = await _poll_upload_status(client, media_id, access, secret)
+            media_key = media_key or status_data.get("media_key")
+
+    if state == "failed":
+        raise HTTPException(422, detail="Media processing failed on X. Please try a different file.")
+    if not media_key:
+        raise HTTPException(502, detail="Upload finished but X did not return a media_key.")
+
+    # Register the uploaded media in the Ads media library (params go in the query string).
+    add_params = {"media_key": media_key, "media_category": media_category, "file_name": file_name}
+    try:
+        await ads_post(f"/accounts/{ads_account_id}/media_library", access, add_params, oauth_token_secret=secret)
+    except HTTPException as e:
+        # If it's already in the library, treat as non-fatal; otherwise surface.
+        detail_text = str(e.detail).lower()
+        if "already" not in detail_text and "exist" not in detail_text and "duplicate" not in detail_text:
+            raise
+
+    if state == "processing":
+        # Client should poll /api/media-status until succeeded.
+        return {"ok": True, "status": "processing", "media_key": media_key,
+                "media_type": app_media_type, "aspect_ratio": None, "preview": None, "name": file_name}
+
+    info = await fetch_media_info(access, ads_account_id, media_key, oauth_token_secret=secret)
+    return {
+        "ok": True,
+        "media_key": media_key,
+        "media_type": info.get("media_type") or app_media_type,
+        "aspect_ratio": info.get("aspect_ratio"),
+        "preview": info.get("preview"),
+        "name": file_name,
+        "status": "succeeded",
+    }
+
+
+@app.get("/api/media-status")
+async def api_media_status(
+    ads_account_id: str,
+    media_key: str,
+    user: Dict[str, Any] = Depends(require_user),
+):
+    """Poll the processing status of a media key (so the frontend can wait for videos)."""
+    if not ads_account_id or not media_key:
+        raise HTTPException(422, detail="ads_account_id and media_key are required.")
+
+    access = await refresh_x_token_if_needed(user)
+    secret = user.get("oauth_token_secret", "")
+
+    try:
+        data = await ads_get(
+            f"/accounts/{ads_account_id}/media_library/{media_key}",
+            access, None, oauth_token_secret=secret,
+        )
+    except HTTPException as e:
+        if e.status_code == 404:
+            return {"ok": True, "status": "processing", "media_key": media_key}
+        raise
+
+    m = data.get("data") if isinstance(data, dict) else None
+    if isinstance(m, list):
+        m = m[0] if m else {}
+    m = m or {}
+
+    status = _map_library_status(m.get("media_status") or m.get("status"))
+    result: Dict[str, Any] = {"ok": True, "status": status, "media_key": media_key}
+    if status == "succeeded":
+        info = await fetch_media_info(access, ads_account_id, media_key, oauth_token_secret=secret)
+        result.update({
+            "media_type": info.get("media_type") or _normalize_media_type(m),
+            "aspect_ratio": info.get("aspect_ratio"),
+            "preview": info.get("preview"),
+            "name": m.get("name") or m.get("file_name") or "",
+        })
+    return result
+
+
+def _host_resolves_to_public_ip(host: str) -> bool:
+    """SSRF guard: True only if `host` resolves and every resolved IP is a public address.
+
+    Blocks localhost and any private/loopback/link-local/reserved/multicast/unspecified
+    address (IPv4 and IPv6), which covers 127.0.0.1, 0.0.0.0, 169.254.169.254 (cloud
+    metadata), RFC1918 ranges, and IPv6 ::1, fc00::/7, fe80::/10.
+    """
+    if not host or host.lower() == "localhost":
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False
+    return True
+
+
 @app.post("/api/validate-url")
-async def api_validate_url(request: Request):
+async def api_validate_url(request: Request, user: Dict[str, Any] = Depends(require_user)):
+    # Preserves the {"valid": bool, "error": str} contract the frontend depends on.
     body = await request.json()
     url = (body.get("url") or "").strip()
     if not url:
         return {"valid": False, "error": "URL is required"}
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return {"valid": False, "error": "Please enter a valid http(s) URL."}
+    # SSRF guard: block requests to internal/metadata hosts before any outbound call.
+    if not _host_resolves_to_public_ip(parsed.hostname):
+        return {"valid": False, "error": "That URL host is not allowed."}
     try:
-        async with httpx.AsyncClient(timeout=6, follow_redirects=True) as client:
+        # follow_redirects=False so a redirect can't bounce us to an unvalidated host.
+        # 3xx is treated as reachable (valid) without following.
+        async with httpx.AsyncClient(timeout=6, follow_redirects=False) as client:
             r = await client.head(url)
             if r.status_code >= 400:
                 return {"valid": False, "error": f"URL returned status {r.status_code}."}
@@ -2116,40 +2888,82 @@ async def api_create_schedule(payload: ScheduleIn, user: Dict[str, Any] = Depend
 
     rec["id"] = sid
     SCHEDULES[sid] = rec
+    # Register a DateTrigger job so execution fires at exactly scheduled_at.
+    add_schedule_job(rec)
     return {"ok": True, "schedule": rec}
 
 @app.get("/api/schedules")
 async def api_list_schedules(user: Dict[str, Any] = Depends(require_user)):
-    # Source of truth: read from DB so the UI always reflects persisted schedules
+    # Primary source: in-memory SCHEDULES dict (always reflects current execution state, including
+    # running/completed transitions that happen mid-flight before DB is synced).
+    in_memory_ids: set = set()
+    mine: list = []
+    for sid, rec in list(SCHEDULES.items()):
+        if rec.get("user_id") == user["id"]:
+            mine.append(dict(rec))  # shallow copy so enrichment doesn't mutate the live dict
+            in_memory_ids.add(int(sid))
+
+    # Fallback: add any DB rows not already covered (e.g. schedules loaded after a server restart
+    # that haven't been touched in this process lifetime and therefore aren't in SCHEDULES yet).
     conn = get_db()
     rows = conn.execute(
         "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
         (user["id"],)
     ).fetchall()
     conn.close()
-    mine = [dict(r) for r in rows]
+    for row in rows:
+        d = dict(row)
+        rid = int(d.get("id") or 0)
+        if rid and rid not in in_memory_ids:
+            mine.append(d)
+            # Hydrate into memory so next calls are consistent
+            SCHEDULES[rid] = d
+
+    # Self-heal stale "running" rows: a run that started too long ago was almost certainly
+    # orphaned (process interrupted before writing a terminal status). Left as-is it makes the
+    # frontend poll forever. Age is measured from started_at (set when the run flips to running),
+    # falling back to scheduled_at/created_at for rows loaded from DB. Genuinely in-progress runs
+    # (started seconds ago) stay "running".
+    now_ts = time.time()
+    for rec in mine:
+        if rec.get("status") != "running":
+            continue
+        started = rec.get("started_at") or rec.get("scheduled_at") or rec.get("created_at") or 0
+        if started and (now_ts - started) > STALE_RUNNING_SECONDS:
+            rec["status"] = "failed"
+            rec["result"] = "Interrupted (stale running state auto-recovered)"
+            rec["executed_at"] = rec.get("executed_at") or now_ts
+            live = SCHEDULES.get(int(rec.get("id") or 0))
+            target = live if live is not None else rec
+            target["status"] = "failed"
+            target["result"] = rec["result"]
+            target["executed_at"] = rec["executed_at"]
+            persist_schedule(target)
 
     # Enrich previews for media changes (for schedules created before previews were stored,
     # or if somehow missing). This makes "old vs new media preview" work for historical items too.
     access = await refresh_x_token_if_needed(user)
     secret = user.get("oauth_token_secret", "")
+
+    # Collect the preview lookups we need, then run them concurrently. Previews are
+    # best-effort for the UI list, so failures must stay non-fatal (return_exceptions).
+    async def _enrich(rec: dict, field: str, media_id: str, ads: str):
+        info = await fetch_media_info(access, ads, media_id, oauth_token_secret=secret)
+        if info.get("preview"):
+            rec[field] = info.get("preview")
+
+    tasks = []
     for rec in mine:
-        try:
-            omid = (rec.get("original_media_id") or "").strip()
-            nmid = (rec.get("new_media_id") or "").strip()
-            ads = rec.get("ads_account_id") or ""
-            if omid and nmid and omid != nmid:
-                if not rec.get("original_preview"):
-                    oi = await fetch_media_info(access, ads, omid, oauth_token_secret=secret)
-                    if oi.get("preview"):
-                        rec["original_preview"] = oi.get("preview")
-                if not rec.get("new_preview"):
-                    ni = await fetch_media_info(access, ads, nmid, oauth_token_secret=secret)
-                    if ni.get("preview"):
-                        rec["new_preview"] = ni.get("preview")
-        except Exception:
-            # Non-fatal; previews are best-effort for the UI list
-            pass
+        omid = (rec.get("original_media_id") or "").strip()
+        nmid = (rec.get("new_media_id") or "").strip()
+        ads = rec.get("ads_account_id") or ""
+        if omid and nmid and omid != nmid:
+            if not rec.get("original_preview"):
+                tasks.append(_enrich(rec, "original_preview", omid, ads))
+            if not rec.get("new_preview"):
+                tasks.append(_enrich(rec, "new_preview", nmid, ads))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _compute_changes(rec: dict) -> list[str]:
         """Return human-readable list of what differs between original and new values."""
@@ -2176,24 +2990,20 @@ async def api_list_schedules(user: Dict[str, Any] = Depends(require_user)):
         # Attach explicit changes summary for the UI (shows "what will be changed" for pending, "what was changed" for executed)
         rec["changes"] = _compute_changes(rec)
 
-    # Split and sort per requirements:
-    # - pending: by scheduled_at ASC (closest/soonest at top)
-    # - executed/others: by executed_at DESC (most recent at top), fallback to scheduled/created
+    # Sort order: pending (by scheduled_at ASC) → running/completed/failed (by executed_at DESC) → cancelled (last)
     def _exec_key(r):
         return (r.get("executed_at") or 0, r.get("created_at") or 0, r.get("scheduled_at") or 0)
 
-    pending = [r for r in mine if (r.get("status") or "pending") == "pending"]
+    pending  = [r for r in mine if r.get("status") == "pending"]
+    active   = [r for r in mine if r.get("status") in ("running", "completed", "failed")]
+    cancelled = [r for r in mine if r.get("status") == "cancelled"]
+    unknown  = [r for r in mine if r.get("status") not in ("pending", "running", "completed", "failed", "cancelled")]
+
     pending.sort(key=lambda r: r.get("scheduled_at") or 0)
+    active.sort(key=_exec_key, reverse=True)
+    cancelled.sort(key=_exec_key, reverse=True)
 
-    others = [r for r in mine if (r.get("status") or "pending") != "pending"]
-    others.sort(key=_exec_key, reverse=True)
-
-    ordered = pending + others
-
-    # keep in-memory in sync
-    for rec in ordered:
-        sid = int(rec["id"])
-        SCHEDULES[sid] = rec
+    ordered = pending + active + unknown + cancelled
     return {"schedules": ordered}
 
 @app.delete("/api/schedules/{sid}")
@@ -2201,12 +3011,10 @@ async def api_cancel_schedule(sid: int, user: Dict[str, Any] = Depends(require_u
     rec = SCHEDULES.get(sid)
     if not rec or rec.get("user_id") != user["id"]:
         raise HTTPException(404, "Schedule not found")
-    if sid in SCHEDULES:
-        del SCHEDULES[sid]
-    conn = get_db()
-    conn.execute("DELETE FROM schedules WHERE id = ?", (sid,))
-    conn.commit()
-    conn.close()
+    remove_schedule_job(sid)  # cancel the waiting APScheduler job
+    rec["status"] = "cancelled"
+    rec["executed_at"] = rec.get("executed_at") or time.time()
+    persist_schedule(rec)
     return {"ok": True}
 
 @app.post("/api/schedules/{sid}/execute")
@@ -2214,7 +3022,9 @@ async def api_force_execute(sid: int, user: Dict[str, Any] = Depends(require_use
     rec = SCHEDULES.get(sid)
     if not rec or rec.get("user_id") != user["id"]:
         raise HTTPException(404, "Schedule not found")
-    await execute_card_update(rec)
+    # Cancel the scheduled job — we're running it now instead.
+    remove_schedule_job(sid)
+    await execute_card_update(rec, force=True)
     # Re-read so the client can see the final status + any error message
     fresh = SCHEDULES.get(sid) or {}
     return {

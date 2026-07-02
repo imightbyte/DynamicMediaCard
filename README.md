@@ -92,6 +92,8 @@ Example uvicorn start command (no reload in prod):
 uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
+> **Run single-worker only.** The scheduler and in-memory state are per-process, so the app MUST run with a single worker (no `--workers N` / no gunicorn multi-worker) or schedules will be duplicated and executed once per worker.
+
 Add a `Procfile`:
 
 ```
