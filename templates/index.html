@@ -4489,20 +4489,29 @@
   function newStep(parts) {
     var off = chosenOffset();
     var p = parts || defaultParts(off, S.steps.length + 1);
-    // Prefill editable fields with the original post's current values (same source the
-    // one-time form uses: the loaded card's title/media/url) so users edit from real defaults.
-    var card = getLoadedCard() || {};
-    return {
-      id: ++S.seq,
-      media_id: card.media_id || '',
-      media_type: card.original_media_type || card.inferred_media_type || '',
-      preview: card.media_preview || '',
-      aspect: card.original_aspect_ratio || '',
-      title: card.title || '',
-      url: card.url || '',
-      date: p.date,
-      time: p.time
-    };
+    // Chaining (snapshot-on-create): the FIRST step defaults from the original loaded card,
+    // and every later step snapshots the PREVIOUS step's CURRENT edited values at the moment
+    // it is created (title, URL, and media incl. id/type/aspect/preview). This is a one-time
+    // snapshot — editing an earlier step afterward does not retroactively change later steps.
+    var prev = S.steps.length ? S.steps[S.steps.length - 1] : null;
+    var st = { id: ++S.seq, date: p.date, time: p.time };
+    if (prev) {
+      st.media_id = prev.media_id || '';
+      st.media_type = prev.media_type || '';
+      st.preview = prev.preview || '';
+      st.aspect = prev.aspect || '';
+      st.title = prev.title || '';
+      st.url = prev.url || '';
+    } else {
+      var card = getLoadedCard() || {};
+      st.media_id = card.media_id || '';
+      st.media_type = card.original_media_type || card.inferred_media_type || '';
+      st.preview = card.media_preview || '';
+      st.aspect = card.original_aspect_ratio || '';
+      st.title = card.title || '';
+      st.url = card.url || '';
+    }
+    return st;
   }
 
   function populateSeriesTz() {
@@ -4613,6 +4622,16 @@
       st.media_type = obj.media_type || '';
       st.aspect = obj.aspect_ratio || '';
       st.preview = obj.preview || obj.thumbnail || '';
+      // Reverting to the original media: the media-library listing may not carry a usable
+      // thumbnail for it, so fall back to the loaded card's known original preview/type/aspect
+      // so the step still shows a media thumbnail instead of going blank.
+      var card = getLoadedCard() || {};
+      var origMid = (card.media_id || '').trim();
+      if (st.media_id && origMid && st.media_id === origMid) {
+        if (!st.preview) st.preview = card.media_preview || '';
+        if (!st.aspect) st.aspect = card.original_aspect_ratio || '';
+        if (!st.media_type) st.media_type = card.original_media_type || card.inferred_media_type || '';
+      }
       render();
     },
     ensureInit: function () {
