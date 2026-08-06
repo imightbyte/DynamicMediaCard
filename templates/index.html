@@ -3396,6 +3396,70 @@
     return out;
   };
 
+  // Reusable in-app confirmation modal (vanilla, promise-based) that replaces native confirm().
+  // Appended once to <body> so the schedules-list re-render never destroys it. Matches the app's
+  // modal look (bg-black/60 backdrop-blur overlay, rounded-2xl bg-card panel). The dismiss button
+  // is caller-labelled (never a bare "Cancel") to avoid clashing with the "Cancel" row action.
+  // Dismiss via the dismiss button, overlay click, or Esc. Usage:
+  //   showConfirm({ title, message, confirmLabel, confirmStyle:'danger'|'primary', dismissLabel })
+  //     -> Promise<boolean>
+  window.showConfirm = function showConfirm(opts) {
+    opts = opts || {};
+    var root = document.getElementById('app-confirm-modal');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'app-confirm-modal';
+      root.style.display = 'none';
+      root.className = 'fixed inset-0 z-[70] flex items-center justify-center p-4';
+      root.innerHTML =
+        '<div data-confirm-overlay class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>' +
+        '<div role="dialog" aria-modal="true" class="relative w-full max-w-md rounded-2xl border border-border bg-card shadow-2xl p-5 space-y-4">' +
+          '<div class="space-y-1">' +
+            '<h3 data-confirm-title class="text-base font-semibold"></h3>' +
+            '<p data-confirm-message class="text-sm text-muted-foreground leading-relaxed"></p>' +
+          '</div>' +
+          '<div class="flex items-center justify-end gap-2">' +
+            '<button type="button" data-confirm-dismiss class="btn-outline text-xs"></button>' +
+            '<button type="button" data-confirm-accept class="text-xs"></button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(root);
+    }
+    var titleEl = root.querySelector('[data-confirm-title]');
+    var msgEl = root.querySelector('[data-confirm-message]');
+    var acceptBtn = root.querySelector('[data-confirm-accept]');
+    var dismissBtn = root.querySelector('[data-confirm-dismiss]');
+    var overlay = root.querySelector('[data-confirm-overlay]');
+
+    titleEl.textContent = opts.title || 'Are you sure?';
+    msgEl.textContent = opts.message || '';
+    msgEl.style.display = opts.message ? '' : 'none';
+    acceptBtn.textContent = opts.confirmLabel || 'Confirm';
+    acceptBtn.className = (opts.confirmStyle === 'primary' ? 'btn-primary' : 'btn-danger') + ' text-xs';
+    dismissBtn.textContent = opts.dismissLabel || 'Go back';
+
+    return new Promise(function (resolve) {
+      var done = false;
+      function cleanup(result) {
+        if (done) return;
+        done = true;
+        root.style.display = 'none';
+        document.removeEventListener('keydown', onKey);
+        acceptBtn.onclick = null;
+        dismissBtn.onclick = null;
+        overlay.onclick = null;
+        resolve(result);
+      }
+      function onKey(e) { if (e.key === 'Escape') cleanup(false); }
+      acceptBtn.onclick = function () { cleanup(true); };
+      dismissBtn.onclick = function () { cleanup(false); };
+      overlay.onclick = function () { cleanup(false); };
+      document.addEventListener('keydown', onKey);
+      root.style.display = '';
+      try { acceptBtn.focus(); } catch (e) {}
+    });
+  };
+
   // Fallback vanilla renderer so the list is visible even if Alpine never attached its data to the root.
   // Prefers setting Alpine data when the declarative templates are still present (keeps x-for/x-if alive).
   // Falls back to full innerHTML rebuild only when the templates appear to have been replaced already
@@ -3643,12 +3707,18 @@
     body.querySelectorAll('button[data-vcancelseries]').forEach(function(b){
       b.onclick = function(){
         var sid = b.getAttribute('data-vcancelseries');
-        if (!confirm('Cancel all remaining pending updates in this series?')) return;
-        window.__schedulesUserAction = true;
-        b.disabled = true;
-        fetch('/api/schedules/series/' + encodeURIComponent(sid) + '/cancel', { method:'POST' })
-          .then(function(){ try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch(e){} })
-          .catch(function(){ try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Failed to cancel series.', isError: true } })); } catch(e){} });
+        window.showConfirm({
+          title: 'Cancel all pending updates in this series?',
+          message: 'All pending updates in this series will be cancelled.',
+          confirmLabel: 'Cancel series', confirmStyle: 'danger', dismissLabel: 'Keep them'
+        }).then(function(ok){
+          if (!ok) return;
+          window.__schedulesUserAction = true;
+          b.disabled = true;
+          fetch('/api/schedules/series/' + encodeURIComponent(sid) + '/cancel', { method:'POST' })
+            .then(function(){ try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch(e){} })
+            .catch(function(){ try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Failed to cancel series.', isError: true } })); } catch(e){} });
+        });
       };
     });
 
@@ -3656,63 +3726,75 @@
     body.querySelectorAll('button[data-vcancel]').forEach(function(b){
       var id = parseInt(b.getAttribute('data-vcancel'), 10);
       b.onclick = function(){
-        if (!confirm('Cancel this scheduled update?')) return;
-        window.__schedulesUserAction = true;
-        // Optimistic: flip badge to "cancelled" and hide the Cancel button immediately.
-        try {
-          var row = b.closest('div.p-4');
-          if (row) {
-            var badge = row.querySelector('[data-status-badge]');
-            if (badge) {
-              badge.className = 'text-[10px] px-1.5 py-px rounded bg-zinc-500/10 text-zinc-500 line-through';
-              badge.textContent = 'cancelled';
+        window.showConfirm({
+          title: 'Cancel this scheduled update?',
+          message: "This stops the update from running. This can't be undone.",
+          confirmLabel: 'Cancel update', confirmStyle: 'danger', dismissLabel: 'Keep it'
+        }).then(function(ok){
+          if (!ok) return;
+          window.__schedulesUserAction = true;
+          // Optimistic: flip badge to "cancelled" and hide the Cancel button immediately.
+          try {
+            var row = b.closest('div.p-4');
+            if (row) {
+              var badge = row.querySelector('[data-status-badge]');
+              if (badge) {
+                badge.className = 'text-[10px] px-1.5 py-px rounded bg-zinc-500/10 text-zinc-500 line-through';
+                badge.textContent = 'cancelled';
+              }
+              b.style.display = 'none';
             }
-            b.style.display = 'none';
-          }
-        } catch(e){}
-        fetch('/api/schedules/' + id, {method:'DELETE'}).then(function(){
-          try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch(e){}
+          } catch(e){}
+          fetch('/api/schedules/' + id, {method:'DELETE'}).then(function(){
+            try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch(e){}
+          });
         });
       };
     });
     body.querySelectorAll('button[data-vrun]').forEach(function(b){
       var id = parseInt(b.getAttribute('data-vrun'), 10);
       b.onclick = function(){
-        if (!confirm('Run this update immediately? (for testing)')) return;
-        window.__schedulesUserAction = true;
+        window.showConfirm({
+          title: 'Run this scheduled update now?',
+          message: 'This runs the update immediately instead of at its scheduled time.',
+          confirmLabel: 'Run now', confirmStyle: 'primary', dismissLabel: 'Not now'
+        }).then(function(ok){
+          if (!ok) return;
+          window.__schedulesUserAction = true;
 
-        // Optimistic: mark running right away in the DOM list (only the matching card)
-        try {
-          var bodyEl = document.getElementById('schedules-list-body');
-          if (bodyEl) {
-            var btn = bodyEl.querySelector('button[data-vrun="' + id + '"]');
-            if (btn) {
-              var row = btn.closest('div.p-4') || btn.closest('div');
-              if (row) {
-                var badge = row.querySelector('[data-status-badge]') || row.querySelector('span[class*="bg-"][class*="/10"]');
-                if (badge) {
-                  badge.className = 'text-[10px] px-1.5 py-px rounded bg-blue-500/10 text-blue-400';
-                  badge.textContent = 'running';
+          // Optimistic: mark running right away in the DOM list (only the matching card)
+          try {
+            var bodyEl = document.getElementById('schedules-list-body');
+            if (bodyEl) {
+              var btn = bodyEl.querySelector('button[data-vrun="' + id + '"]');
+              if (btn) {
+                var row = btn.closest('div.p-4') || btn.closest('div');
+                if (row) {
+                  var badge = row.querySelector('[data-status-badge]') || row.querySelector('span[class*="bg-"][class*="/10"]');
+                  if (badge) {
+                    badge.className = 'text-[10px] px-1.5 py-px rounded bg-blue-500/10 text-blue-400';
+                    badge.textContent = 'running';
+                  }
                 }
               }
             }
-          }
-        } catch(e){}
+          } catch(e){}
 
-        fetch('/api/schedules/' + id + '/execute', {method:'POST'})
-          .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
-            if (!r.ok || j.status === 'failed') {
-              var msg = (j && (j.result || j.detail)) || 'Run now failed (see list for details)';
-              try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Run now: ' + msg, isError: true } })); } catch(e){}
-            } else {
-              // Start polling every 4s until the running item reaches a terminal state.
-              try { if (window.__startRunningPoller) window.__startRunningPoller(); } catch(e){}
-              try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Execution started — status will update automatically.' } })); } catch(e){}
-            }
-          }); })
-          .catch(function(e){
-            try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Network error running now.', isError: true } })); } catch(e){}
-          });
+          fetch('/api/schedules/' + id + '/execute', {method:'POST'})
+            .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
+              if (!r.ok || j.status === 'failed') {
+                var msg = (j && (j.result || j.detail)) || 'Run now failed (see list for details)';
+                try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Run now: ' + msg, isError: true } })); } catch(e){}
+              } else {
+                // Start polling every 4s until the running item reaches a terminal state.
+                try { if (window.__startRunningPoller) window.__startRunningPoller(); } catch(e){}
+                try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Execution started — status will update automatically.' } })); } catch(e){}
+              }
+            }); })
+            .catch(function(e){
+              try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Network error running now.', isError: true } })); } catch(e){}
+            });
+        });
       };
     });
   }
