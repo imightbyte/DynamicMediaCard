@@ -1376,9 +1376,10 @@
       if (typeEl) typeEl.textContent = (card.card_type || 'card').toUpperCase();
 
       // App cards show only media on X (no title / destination URL). Hide those fields in
-      // both the "Current Card" display and the one-time Schedule Update form. Detection is
-      // the backend-normalized card_type === 'app' (see parse_card_response in main.py).
-      var isAppCard = String(card.card_type || '').toLowerCase() === 'app';
+      // both the "Current Card" display and the one-time Schedule Update form. Detection uses a
+      // substring test on the normalized card_type ("app" vs "website") so website cards keep
+      // their editable Title / Destination URL (see parse_card_response in main.py).
+      var isAppCard = String(card.card_type || '').toLowerCase().indexOf('app') !== -1;
       ['cc-title-wrap', 'cc-url-wrap', 'new-title-wrap', 'new-url-wrap'].forEach(function (wid) {
         var w = document.getElementById(wid);
         if (w) w.style.display = isAppCard ? 'none' : '';
@@ -4576,9 +4577,12 @@
   function normType(t) { t = (t || '').toLowerCase(); if (!t) return ''; return t.indexOf('video') !== -1 ? 'video' : 'image'; }
   // App cards show only media on X (no title / destination URL). Hide those inputs in the
   // series step form and skip URL validation for them (mirrors the one-time flow).
+  // Detection matches the backend: the normalized card_type is "app" for app cards and
+  // "website" for website cards. Use a substring test so website cards (which never contain
+  // "app") are always treated as editable, and any raw value (e.g. IMAGE_APP) still resolves.
   function isAppCard() {
     var card = getLoadedCard();
-    return !!(card && String(card.card_type || '').toLowerCase() === 'app');
+    return !!(card && String(card.card_type || '').toLowerCase().indexOf('app') !== -1);
   }
 
   // Epoch (seconds) from a date string + HH:MM interpreted in a fixed UTC offset (mirrors epochFromLocal).

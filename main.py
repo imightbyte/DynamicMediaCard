@@ -1176,10 +1176,15 @@ def parse_card_response(card_json: Dict[str, Any]) -> Dict[str, Any]:
             or ""
         )
 
+    # Classify as an app card ONLY from the card's own card_type (e.g. IMAGE_APP, VIDEO_APP,
+    # *_APP_DOWNLOAD) or an explicit legacy app-card container key. We deliberately do NOT scan
+    # the entire raw JSON for "app_download": website-card responses can contain that substring
+    # in unrelated nested fields, which previously misclassified website cards as app cards and
+    # wrongly hid the editable Title / Destination URL. Website cards must stay "website".
     card_type_raw = card.get("card_type") or ""
-    card_type = "website"
-    if "app" in str(card_type_raw).lower() or "app_download" in str(card_json).lower():
-        card_type = "app"
+    card_type_low = str(card_type_raw).lower()
+    is_app = ("app" in card_type_low) or (isinstance(card_json, dict) and "app_download_card" in card_json)
+    card_type = "app" if is_app else "website"
 
     inferred = media_type
     if not inferred:
@@ -2941,7 +2946,7 @@ async def api_create_schedule(payload: ScheduleIn, user: Dict[str, Any] = Depend
 
     # App cards show only media on X (no destination URL), so the URL is not user-editable
     # and may be empty/unchanged — skip the http(s) requirement for them.
-    is_app_card = (payload.card_type or "").strip().lower() == "app"
+    is_app_card = "app" in (payload.card_type or "").strip().lower()
     if not is_app_card:
         parsed = urlparse(payload.new_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -3090,7 +3095,7 @@ async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depe
     parsed_url_scheme = ("http", "https")
     # App cards show only media on X (no destination URL), so the URL is not user-editable
     # and may be empty/unchanged — skip the http(s) requirement for them.
-    is_app_card = (payload.card_type or "").strip().lower() == "app"
+    is_app_card = "app" in (payload.card_type or "").strip().lower()
 
     # --- Validate + build EVERY step before inserting anything (atomic create) ---
     recs: List[Dict[str, Any]] = []
