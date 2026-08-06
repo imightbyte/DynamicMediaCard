@@ -8,6 +8,8 @@ Dynamic Media Card Tool lets you schedule an update to an existing X website car
 
 You'll need an active X Ads account at [ads.x.com](https://ads.x.com) (required to read and update card creatives via the Ads API).
 
+> **Note (X internal):** The X handle using this tool must have **DSO** as its service level.
+
 ## Signing In
 
 - Open the app and click **Sign in with X**.
@@ -15,6 +17,8 @@ You'll need an active X Ads account at [ads.x.com](https://ads.x.com) (required 
 - Grant permission — you'll be redirected back to the tool and the scheduler interface will load.
 
 Before you sign in, open x.com in the same browser and make sure you're logged into the exact X account that owns the post you want to change. The card can only be updated by an account with access to it.
+
+**Your session expires for security.** You're signed out automatically after **60 minutes of inactivity**, and also whenever you **close the browser** — after that you'll need to **Sign in with X** again. This only affects access to the tool: any updates you've already scheduled will still run at their set time, even while you're signed out.
 
 ## Connecting Your X Ads Account
 
@@ -110,6 +114,7 @@ Your saved updates appear under **Your Scheduled Updates**. Click **Refresh** to
 | Problem | Solution |
 | --- | --- |
 | Sign-in window is blocked | Allow pop-ups for this site, then click Sign in with X again. Make sure you're already logged into the correct X account in the same browser. |
+| You were signed out unexpectedly | Sessions end after 60 minutes of inactivity or when you close the browser. Click Sign in with X to continue — any already-scheduled updates keep running while you're signed out. |
 | Required badge won't turn green | Enter a valid X Ads Account ID in the field, or click a detected chip. Confirm your X account has an active Ads account at ads.x.com → Account settings, and that you're signed in as that user. |
 | "No card found" / validation fails | The post must contain a website card or app card. Check the URL is a full x.com/twitter.com `/status/` link, the post is public, and your selected Ads account actually has access to that card. |
 | Can't access the Ads account during validation | Sign in with an X account that has access to that Ads account, verify the Account ID is exact, and ensure your app has the Ads API product enabled. |
