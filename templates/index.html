@@ -330,6 +330,21 @@
             Schedule Update
           </h2>
 
+          <!-- Create-mode tabs: One-time (existing single schedule) vs Multiple updates (series) -->
+          <div id="schedule-tabs" class="flex gap-1 border-b border-border">
+            <button type="button" id="tab-onetime-btn"
+                    onclick="window.switchScheduleTab && window.switchScheduleTab('onetime')"
+                    class="px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-border bg-muted text-foreground">
+              One-time
+            </button>
+            <button type="button" id="tab-series-btn"
+                    onclick="window.switchScheduleTab && window.switchScheduleTab('series')"
+                    class="px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-transparent text-muted-foreground hover:bg-muted/40">
+              Multiple updates (series)
+            </button>
+          </div>
+
+          <div id="onetime-pane" class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- New Title -->
             <div>
@@ -358,7 +373,7 @@
                   :class="mediaDimError ? 'border-red-500/70' : ''"
                 />
                 <button id="select-media-btn" type="button"
-                        onclick="if (window.openMediaPicker) { window.openMediaPicker(); } else { console.warn('[MEDIA-PICKER] openMediaPicker not ready yet'); }"
+                        onclick="window.__mediaPickerTarget = null; if (window.openMediaPicker) { window.openMediaPicker(); } else { console.warn('[MEDIA-PICKER] openMediaPicker not ready yet'); }"
                         class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted active:bg-muted/70 text-foreground whitespace-nowrap"
                         title="Browse your media library or upload a new file">
                   Select new media
@@ -461,6 +476,52 @@
             <div class="mt-1.5">
               <span class="text-xs text-muted-foreground">The update will be applied at the scheduled time.</span>
               <div id="save-sched-status" style="margin-top:2px; font-size:11px; min-height:1em;"></div>
+            </div>
+          </div>
+          </div><!-- /#onetime-pane -->
+
+          <!-- Multiple updates (series) builder. Vanilla-driven to avoid Alpine re-render churn. -->
+          <div id="series-pane" style="display:none" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="text-xs text-muted-foreground mb-1.5 block">Series name (label)</label>
+                <input id="series-label-input" type="text" maxlength="80"
+                       placeholder="e.g. World Cup kickoff"
+                       class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary" />
+              </div>
+              <div>
+                <label class="text-xs text-muted-foreground mb-1.5 block">Timezone (shared by all steps)</label>
+                <select id="series-tz-select"
+                        class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary"></select>
+              </div>
+            </div>
+
+            <label class="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+              <input id="series-stop-on-failure" type="checkbox"
+                     class="rounded border-border bg-muted/50 text-primary focus:ring-primary" />
+              <span>Stop remaining updates if one fails (otherwise the remaining steps still run)</span>
+            </label>
+
+            <div id="series-steps" class="space-y-3"></div>
+
+            <div>
+              <button type="button" id="series-add-step-btn"
+                      class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground">
+                + Add step
+              </button>
+            </div>
+
+            <div id="series-error-box" style="display:none" class="text-xs text-red-400"></div>
+
+            <div>
+              <button type="button" id="series-save-btn"
+                      class="btn-primary px-6 py-2.5 disabled:opacity-50 flex items-center gap-2">
+                <span>Create series</span>
+              </button>
+              <div class="mt-1.5">
+                <span class="text-xs text-muted-foreground">All updates apply to the same card at their own scheduled times.</span>
+                <div id="series-save-status" style="margin-top:2px; font-size:11px; min-height:1em;"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -3305,27 +3366,43 @@
       }
       return s;
     });
-    var html = '<div class="divide-y divide-border text-sm">';
-    list.forEach(function(s){
+    function statusClass(status){
       var sc = 'bg-zinc-500/10 text-zinc-400';
-      if (s.status === 'pending')   sc = 'bg-yellow-500/10 text-yellow-400';
-      else if (s.status === 'running')   sc = 'bg-blue-500/10 text-blue-400';
-      else if (s.status === 'completed') sc = 'bg-green-500/10 text-green-400';
-      else if (s.status === 'failed')    sc = 'bg-red-500/10 text-red-400';
-      else if (s.status === 'cancelled') sc = 'bg-zinc-500/10 text-zinc-500 line-through';
+      if (status === 'pending')   sc = 'bg-yellow-500/10 text-yellow-400';
+      else if (status === 'running')   sc = 'bg-blue-500/10 text-blue-400';
+      else if (status === 'completed') sc = 'bg-green-500/10 text-green-400';
+      else if (status === 'failed')    sc = 'bg-red-500/10 text-red-400';
+      else if (status === 'cancelled') sc = 'bg-zinc-500/10 text-zinc-500 line-through';
+      return sc;
+    }
+
+    // Renders one schedule row. opts.compact => hide account/card header (used for series steps,
+    // where the account/card is already shown on the series header) and show a "Step N" tag instead.
+    function rowHtml(s, opts){
+      opts = opts || {};
+      var sc = statusClass(s.status);
       var when = new Date(((s.scheduled_at||0)*1000)).toLocaleString();
-      html += '<div class="p-4 flex flex-col md:flex-row md:items-start gap-3">' +
-        '<div class="flex-1 space-y-1">' +
-          '<div class="flex items-center gap-2">' +
+      var header;
+      if (opts.compact) {
+        header = '<div class="flex items-center gap-2">' +
+            '<span class="text-[10px] px-1.5 py-0.5 bg-muted rounded">Step ' + escHtml(String(s.step || opts.stepIndex || '')) + '</span>' +
+            '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + (s.status || '') + '</span>' +
+          '</div>';
+      } else {
+        header = '<div class="flex items-center gap-2">' +
             '<span class="font-mono text-xs px-1.5 py-0.5 bg-muted rounded">' + escHtml(s.ads_account_id || '') + '</span>' +
             '<span class="font-mono text-xs text-muted-foreground">card:</span>' +
             '<span class="font-mono text-xs">' + escHtml(s.card_id || '') + '</span>' +
             '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + (s.status || '') + '</span>' +
-          '</div>' +
+            (opts.oneTimeTag ? '<span class="text-[10px] px-1.5 py-px rounded bg-muted text-muted-foreground">One-time</span>' : '') +
+          '</div>';
+      }
+      return '<div class="p-4 flex flex-col md:flex-row md:items-start gap-3">' +
+        '<div class="flex-1 space-y-1">' +
+          header +
           '<div class="text-xs text-muted-foreground"><span>Scheduled (local time): </span><span class="text-foreground">' + when + '</span></div>' +
           (s.executed_at ? '<div class="text-xs text-muted-foreground"><span>Executed: </span><span class="text-foreground">' + new Date(s.executed_at * 1000).toLocaleString() + '</span></div>' : '') +
           (function(){
-            // Always compute changes client-side as fallback (for optimistic inserts etc.)
             var ch = (s.changes && s.changes.length) ? s.changes : (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []);
             if (ch && ch.length) {
               var label = (s.status === 'pending') ? 'Will change:' : 'Changed:';
@@ -3351,12 +3428,12 @@
             var om = s.original_media_id || '';
             var nm = s.new_media_id || '';
             if (om && nm && om !== nm && (op || np)) {
-              var html = '<div class="pt-1 flex items-center gap-2 text-[10px]"><span class="text-muted-foreground shrink-0">Media previews:</span><div class="flex items-center gap-1.5">';
-              if (op) html += '<img src="' + escHtml(op) + '" alt="original" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
-              html += '<span class="text-muted-foreground">→</span>';
-              if (np) html += '<img src="' + escHtml(np) + '" alt="new" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
-              html += '</div></div>';
-              return html;
+              var h = '<div class="pt-1 flex items-center gap-2 text-[10px]"><span class="text-muted-foreground shrink-0">Media previews:</span><div class="flex items-center gap-1.5">';
+              if (op) h += '<img src="' + escHtml(op) + '" alt="original" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
+              h += '<span class="text-muted-foreground">→</span>';
+              if (np) h += '<img src="' + escHtml(np) + '" alt="new" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
+              h += '</div></div>';
+              return h;
             }
             return '';
           })() +
@@ -3374,9 +3451,125 @@
           ((s.status !== 'cancelled' && s.status !== 'running') ? '<button class="btn-outline text-xs" data-vrun="' + s.id + '">Run now</button>' : '') +
         '</div>' +
       '</div>';
+    }
+
+    function fmtCountdown(sec){
+      var d = sec - Date.now()/1000;
+      if (d <= 0) return 'due now';
+      var h = Math.floor(d/3600), m = Math.floor((d%3600)/60);
+      if (h >= 24){ var days = Math.floor(h/24); return 'in ' + days + 'd ' + (h%24) + 'h'; }
+      if (h > 0) return 'in ' + h + 'h ' + m + 'm';
+      return 'in ' + m + 'm';
+    }
+
+    // Renders a collapsible series group (header + progress summary + expandable steps).
+    function seriesHtml(seriesId, steps){
+      steps = steps.slice().sort(function(a,b){
+        var sa = (a.step != null) ? a.step : (a.scheduled_at || 0);
+        var sb = (b.step != null) ? b.step : (b.scheduled_at || 0);
+        return sa - sb;
+      });
+      var total = steps.length;
+      var counts = { completed:0, failed:0, cancelled:0, running:0, pending:0 };
+      steps.forEach(function(s){ if (counts[s.status] != null) counts[s.status]++; });
+      var label = '';
+      for (var i=0;i<steps.length;i++){ if (steps[i].series_label){ label = steps[i].series_label; break; } }
+      if (!label) label = 'Untitled series';
+      var hasPending = counts.pending > 0;
+      var pendings = steps.filter(function(s){ return s.status === 'pending'; });
+      var nextStep = pendings.length ? pendings.reduce(function(a,b){ return (a.scheduled_at||0) <= (b.scheduled_at||0) ? a : b; }) : null;
+
+      var breakdownParts = [];
+      breakdownParts.push(counts.completed + ' done');
+      if (counts.pending) breakdownParts.push(counts.pending + ' pending');
+      if (counts.running) breakdownParts.push(counts.running + ' running');
+      if (counts.failed) breakdownParts.push(counts.failed + ' failed');
+      if (counts.cancelled) breakdownParts.push(counts.cancelled + ' cancelled');
+
+      var expanded = !!(window.__seriesExpanded && window.__seriesExpanded[seriesId]);
+      var nextInfo = '';
+      if (nextStep){
+        var nt = new Date((nextStep.scheduled_at||0)*1000).toLocaleString();
+        nextInfo = '<div class="text-[11px] text-muted-foreground">Next: <span class="text-foreground">' + escHtml(nt) + '</span> <span class="text-muted-foreground">(' + fmtCountdown(nextStep.scheduled_at||0) + ')</span></div>';
+      }
+
+      var stepsInner = '';
+      steps.forEach(function(s, i){ stepsInner += rowHtml(s, { compact:true, stepIndex:(i+1) }); });
+
+      return '<div class="p-4 space-y-2" data-series-group="' + escHtml(seriesId) + '">' +
+        '<div class="flex flex-col md:flex-row md:items-start gap-3">' +
+          '<div class="flex-1 space-y-1">' +
+            '<div class="flex items-center gap-2 flex-wrap">' +
+              '<button type="button" data-series-toggle="' + escHtml(seriesId) + '" class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">' +
+                '<span data-series-caret style="display:inline-block;transition:transform .15s;' + (expanded ? 'transform:rotate(90deg);' : '') + '">▶</span>' +
+              '</button>' +
+              '<span class="font-semibold text-sm">' + escHtml(label) + '</span>' +
+              '<span class="text-[10px] px-1.5 py-px rounded bg-primary/15 text-primary">Multiple updates</span>' +
+              '<span class="text-[10px] px-1.5 py-px rounded bg-muted text-muted-foreground">' + counts.completed + ' of ' + total + ' done</span>' +
+            '</div>' +
+            '<div class="text-[11px] text-muted-foreground">' +
+              '<span class="font-mono">' + escHtml((steps[0] && steps[0].ads_account_id) || '') + '</span> · card: <span class="font-mono">' + escHtml((steps[0] && steps[0].card_id) || '') + '</span>' +
+            '</div>' +
+            '<div class="text-[11px] text-muted-foreground">' + escHtml(breakdownParts.join(' · ')) + '</div>' +
+            nextInfo +
+          '</div>' +
+          '<div class="flex md:flex-col gap-2 shrink-0">' +
+            (hasPending ? '<button class="btn-danger text-xs" data-vcancelseries="' + escHtml(seriesId) + '">Cancel series</button>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="rounded-xl border border-border divide-y divide-border" data-series-steps="' + escHtml(seriesId) + '" style="' + (expanded ? '' : 'display:none;') + '">' +
+          stepsInner +
+        '</div>' +
+      '</div>';
+    }
+
+    // Group rows: one-time rows render inline; series rows collapse into a group at the
+    // position of their first member. Order otherwise follows the server-provided order.
+    var order = [];
+    var seenSeries = {};
+    list.forEach(function(s){
+      if (s.series_id) {
+        if (!seenSeries[s.series_id]) { seenSeries[s.series_id] = true; order.push({ type:'series', id:s.series_id }); }
+      } else {
+        order.push({ type:'one', s:s });
+      }
+    });
+
+    var html = '<div class="divide-y divide-border text-sm">';
+    order.forEach(function(tok){
+      if (tok.type === 'one') { html += rowHtml(tok.s, { oneTimeTag:true }); }
+      else { html += seriesHtml(tok.id, list.filter(function(x){ return x.series_id === tok.id; })); }
     });
     html += '</div>';
     body.innerHTML = html;
+
+    // Wire series expand/collapse toggles.
+    window.__seriesExpanded = window.__seriesExpanded || {};
+    body.querySelectorAll('button[data-series-toggle]').forEach(function(b){
+      b.onclick = function(){
+        var sid = b.getAttribute('data-series-toggle');
+        var nowExp = !window.__seriesExpanded[sid];
+        window.__seriesExpanded[sid] = nowExp;
+        var stepsBox = body.querySelector('[data-series-steps="' + (window.CSS && CSS.escape ? CSS.escape(sid) : sid) + '"]');
+        if (!stepsBox) { try { stepsBox = body.querySelector('[data-series-steps]'); } catch(e){} }
+        var caret = b.querySelector('[data-series-caret]');
+        if (stepsBox) stepsBox.style.display = nowExp ? '' : 'none';
+        if (caret) caret.style.transform = nowExp ? 'rotate(90deg)' : '';
+      };
+    });
+
+    // Wire series-level cancel (cancels all remaining pending steps).
+    body.querySelectorAll('button[data-vcancelseries]').forEach(function(b){
+      b.onclick = function(){
+        var sid = b.getAttribute('data-vcancelseries');
+        if (!confirm('Cancel all remaining pending updates in this series?')) return;
+        window.__schedulesUserAction = true;
+        b.disabled = true;
+        fetch('/api/schedules/series/' + encodeURIComponent(sid) + '/cancel', { method:'POST' })
+          .then(function(){ try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch(e){} })
+          .catch(function(){ try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Failed to cancel series.', isError: true } })); } catch(e){} });
+      };
+    });
 
     // Wire vanilla action buttons
     body.querySelectorAll('button[data-vcancel]').forEach(function(b){
@@ -3855,6 +4048,17 @@
     var preview = mediaObj.preview || mediaObj.thumbnail || '';
     if (!mediaKey) { toast('No media key was returned for the selected media.', true); return; }
 
+    // Series routing: if a series step invoked the picker, write into that step's state
+    // instead of the single-flow inputs, then stop.
+    try {
+      var tgt = window.__mediaPickerTarget;
+      if (tgt && tgt.kind === 'series' && window.SeriesBuilder) {
+        window.SeriesBuilder.applyMedia(tgt.stepId, { media_key: mediaKey, media_type: mediaType, aspect_ratio: aspect, preview: preview });
+        window.__mediaPickerTarget = null;
+        return;
+      }
+    } catch (e) {}
+
     // ORDER MATTERS: dispatching 'input' on #new-media-input synchronously fires Alpine's
     // @input="clearMediaValidation()", which wipes #media-check-status and mediaDimResult.
     // Therefore the status/preview write and the mediaDimResult write below MUST stay AFTER
@@ -4156,6 +4360,367 @@
   setTimeout(activateMediaPicker, 0);
   setTimeout(activateMediaPicker, 160);
   setTimeout(activateMediaPicker, 400);
+})();
+</script>
+
+<!-- Create-mode tabs + Multiple updates (series) builder. Vanilla to avoid Alpine re-render churn;
+     reuses the shared media picker, timezone offsets and epoch math from the single-schedule flow. -->
+<script>
+(function () {
+  function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  function toast(msg, isError) {
+    try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: msg, isError: !!isError } })); } catch (e) {}
+  }
+
+  // ── Tab switching (One-time vs Multiple updates) ─────────────────────────────
+  window.switchScheduleTab = function switchScheduleTab(which) {
+    var onePane = document.getElementById('onetime-pane');
+    var serPane = document.getElementById('series-pane');
+    var oneBtn = document.getElementById('tab-onetime-btn');
+    var serBtn = document.getElementById('tab-series-btn');
+    var activeCls = 'px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-border bg-muted text-foreground';
+    var idleCls = 'px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-transparent text-muted-foreground hover:bg-muted/40';
+    var series = (which === 'series');
+    if (onePane) onePane.style.display = series ? 'none' : '';
+    if (serPane) serPane.style.display = series ? '' : 'none';
+    if (oneBtn) oneBtn.className = series ? idleCls : activeCls;
+    if (serBtn) serBtn.className = series ? activeCls : idleCls;
+    if (series) { try { window.SeriesBuilder.ensureInit(); } catch (e) {} }
+  };
+
+  // ── Helpers shared with the single-schedule flow ─────────────────────────────
+  function pickAdsAccountId() {
+    try { var el = document.getElementById('ads-account-input'); var v = el && el.value ? el.value.trim() : ''; if (v) return v; } catch (e) {}
+    if (window.__lastAdsAccountId) return window.__lastAdsAccountId;
+    return '';
+  }
+  function getLoadedCard() {
+    if (window.__lastLoadedCard) return window.__lastLoadedCard;
+    try {
+      var root = document.querySelector('[x-data^="cardScheduler"]');
+      var d = root && ((window.Alpine && window.Alpine.$data && window.Alpine.$data(root)) || (root.__x && root.__x.$data));
+      if (d && d.loadedCard) return d.loadedCard;
+    } catch (e) {}
+    return null;
+  }
+  function origMediaType() {
+    var card = getLoadedCard();
+    var raw = card ? (card.original_media_type || card.inferred_media_type || '') : '';
+    raw = (raw || '').toLowerCase();
+    return raw.indexOf('video') !== -1 ? 'video' : 'image';
+  }
+  function normType(t) { t = (t || '').toLowerCase(); if (!t) return ''; return t.indexOf('video') !== -1 ? 'video' : 'image'; }
+
+  // Epoch (seconds) from a date string + HH:MM interpreted in a fixed UTC offset (mirrors epochFromLocal).
+  function epochFromParts(dateStr, timeStr, offHours) {
+    if (!dateStr) return 0;
+    var tv = (window.normalizeHhMm ? window.normalizeHhMm(timeStr || '00:00') : (timeStr || '00:00')) || '00:00';
+    var dp = String(dateStr).split('-').map(Number);
+    var tp = String(tv).split(':').map(Number);
+    var y = dp[0], mo = dp[1], d = dp[2], h = tp[0] || 0, m = tp[1] || 0;
+    if (!y || !mo || !d) return 0;
+    var offMin = Math.round((Number(offHours) || 0) * 60);
+    var utcMs = Date.UTC(y, (mo || 1) - 1, d || 1, h, m, 0, 0) - offMin * 60000;
+    return Math.floor(utcMs / 1000);
+  }
+  // Default wall date/time (+addHours from now) in the chosen offset -> {date, time}.
+  function defaultParts(offHours, addHours) {
+    var off = Number(offHours) || 0;
+    var offMin = Math.round(off * 60);
+    var target = Date.now() + (addHours || 1) * 3600 * 1000;
+    var wall = new Date(target + offMin * 60000);
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    return {
+      date: wall.getUTCFullYear() + '-' + pad(wall.getUTCMonth() + 1) + '-' + pad(wall.getUTCDate()),
+      time: pad(wall.getUTCHours()) + ':' + pad(wall.getUTCMinutes())
+    };
+  }
+
+  // ── Series builder module ────────────────────────────────────────────────────
+  var S = { steps: [], seq: 0, inited: false };
+
+  function chosenOffset() {
+    var sel = document.getElementById('series-tz-select');
+    return sel && sel.value !== '' ? Number(sel.value) : 0;
+  }
+  function newStep(parts) {
+    var off = chosenOffset();
+    var p = parts || defaultParts(off, S.steps.length + 1);
+    return { id: ++S.seq, media_id: '', media_type: '', preview: '', aspect: '', title: '', url: '', date: p.date, time: p.time };
+  }
+
+  function populateSeriesTz() {
+    var sel = document.getElementById('series-tz-select');
+    if (!sel || sel.__filled) return;
+    var offsets = [];
+    for (var i = -12; i <= 14; i++) offsets.push(i);
+    [-9.5, -3.5, 3.5, 4.5, 5.5, 5.75, 9.5, 12.75].forEach(function (h) { offsets.push(h); });
+    offsets.sort(function (a, b) { return a - b; });
+    sel.innerHTML = '';
+    offsets.forEach(function (off) {
+      var o = document.createElement('option');
+      o.value = String(off);
+      o.textContent = 'GMT/UTC' + (off > 0 ? '+' : '') + off;
+      sel.appendChild(o);
+    });
+    // Adopt the single-flow chosen offset if available, else 0.
+    var adopt = '0';
+    try {
+      var single = document.querySelector('select[x-model="chosenUtcOffset"]');
+      if (single && single.value !== '') adopt = single.value;
+    } catch (e) {}
+    sel.value = adopt;
+    sel.__filled = true;
+  }
+
+  function readStateFromDom() {
+    var cont = document.getElementById('series-steps');
+    if (!cont) return;
+    S.steps.forEach(function (st) {
+      var card = cont.querySelector('[data-step="' + st.id + '"]');
+      if (!card) return;
+      var t = card.querySelector('[data-field="title"]'); if (t) st.title = t.value;
+      var u = card.querySelector('[data-field="url"]'); if (u) st.url = u.value;
+      var d = card.querySelector('[data-field="date"]'); if (d) st.date = d.value;
+      var tm = card.querySelector('[data-field="time"]'); if (tm) st.time = tm.value;
+    });
+  }
+
+  function stepCardHtml(st, idx) {
+    var origType = origMediaType();
+    var mediaLine;
+    if (st.media_id) {
+      mediaLine =
+        (st.preview ? '<img src="' + escHtml(st.preview) + '" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;vertical-align:middle;margin-right:6px;" />' : '') +
+        '<span class="font-mono text-xs break-all">' + escHtml(st.media_id) + '</span>' +
+        (st.media_type ? ' <span class="text-[10px] text-muted-foreground">(' + escHtml(st.media_type) + (st.aspect ? ', ' + escHtml(st.aspect) : '') + ')</span>' : '');
+    } else {
+      mediaLine = '<span class="text-[11px] text-muted-foreground">No new media selected (keeps the original ' + escHtml(origType) + ').</span>';
+    }
+    return '' +
+      '<div class="rounded-xl border border-border bg-background p-3 space-y-3" data-step="' + st.id + '">' +
+        '<div class="flex items-center justify-between">' +
+          '<span class="text-xs font-semibold">Update #' + idx + '</span>' +
+          '<button type="button" data-series-remove="' + st.id + '" class="text-[11px] text-red-400 hover:text-red-300"' + (S.steps.length <= 2 ? ' style="display:none"' : '') + '>Remove</button>' +
+        '</div>' +
+        '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' +
+          '<div>' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">New Title</label>' +
+            '<input data-field="title" type="text" maxlength="70" value="' + escHtml(st.title) + '" class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" />' +
+          '</div>' +
+          '<div>' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">New Media (matches original ' + escHtml(origType) + ')</label>' +
+            '<div class="flex items-center gap-2">' +
+              '<button type="button" data-series-pickmedia="' + st.id + '" class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground whitespace-nowrap">Select media</button>' +
+              (st.media_id ? '<button type="button" data-series-clearmedia="' + st.id + '" class="text-[11px] text-muted-foreground hover:text-foreground">Clear</button>' : '') +
+            '</div>' +
+            '<div class="mt-1 text-xs">' + mediaLine + '</div>' +
+          '</div>' +
+          '<div class="md:col-span-2">' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">New Destination URL</label>' +
+            '<input data-field="url" type="url" value="' + escHtml(st.url) + '" placeholder="https://example.com/landing-page" class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" />' +
+          '</div>' +
+          '<div class="md:col-span-2">' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">Scheduled time (must be in the future)</label>' +
+            '<div class="flex flex-wrap items-end gap-2">' +
+              '<div><div class="text-[10px] text-muted-foreground mb-0.5">Date</div>' +
+                '<input data-field="date" type="date" value="' + escHtml(st.date) + '" class="px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" /></div>' +
+              '<div><div class="text-[10px] text-muted-foreground mb-0.5">Time (24-hour)</div>' +
+                '<input data-field="time" type="text" inputmode="numeric" maxlength="5" placeholder="HH:MM" value="' + escHtml(st.time) + '" style="width:7.5em;" class="px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono focus:ring-1 focus:ring-primary focus:border-primary" /></div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function render() {
+    var cont = document.getElementById('series-steps');
+    if (!cont) return;
+    var html = '';
+    S.steps.forEach(function (st, i) { html += stepCardHtml(st, i + 1); });
+    cont.innerHTML = html;
+  }
+
+  function setError(msg) {
+    var box = document.getElementById('series-error-box');
+    if (!box) return;
+    if (msg) { box.textContent = msg; box.style.display = ''; }
+    else { box.textContent = ''; box.style.display = 'none'; }
+  }
+
+  window.SeriesBuilder = {
+    applyMedia: function (stepId, obj) {
+      readStateFromDom();
+      var st = S.steps.find(function (s) { return String(s.id) === String(stepId); });
+      if (!st) return;
+      st.media_id = obj.media_key || obj.media_id || '';
+      st.media_type = obj.media_type || '';
+      st.aspect = obj.aspect_ratio || '';
+      st.preview = obj.preview || obj.thumbnail || '';
+      render();
+    },
+    ensureInit: function () {
+      populateSeriesTz();
+      if (!S.inited) {
+        S.inited = true;
+        if (!S.steps.length) { S.steps.push(newStep()); S.steps.push(newStep()); }
+        render();
+      }
+    }
+  };
+
+  function collectAndValidate() {
+    readStateFromDom();
+    setError('');
+    var card = getLoadedCard();
+    var ads = pickAdsAccountId();
+    if (!card || !ads) { setError('Load a card and select an Ads Account ID first (One-time tab).'); return null; }
+    if (S.steps.length < 2) { setError('A series needs at least 2 steps.'); return null; }
+
+    var off = chosenOffset();
+    var origType = origMediaType();
+    var origMid = (card.media_id || '').trim();
+    var nowSec = Date.now() / 1000;
+    var built = [];
+    var epochs = [];
+    for (var i = 0; i < S.steps.length; i++) {
+      var st = S.steps[i];
+      var n = i + 1;
+      if (!st.date || !st.time) { setError('Step ' + n + ': choose a date and time.'); return null; }
+      var epoch = epochFromParts(st.date, st.time, off);
+      if (!epoch || epoch <= nowSec) { setError('Step ' + n + ': scheduled time must be in the future.'); return null; }
+      var url = (st.url || '').trim();
+      var parsed;
+      try { parsed = new URL(url); } catch (e) { parsed = null; }
+      if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) { setError('Step ' + n + ': enter a valid http(s) destination URL.'); return null; }
+      var mid = (st.media_id || '').trim();
+      if (mid && mid !== origMid && st.media_type && origType && normType(st.media_type) !== normType(origType)) {
+        setError('Step ' + n + ': media type mismatch (original is ' + origType + ', selected is ' + st.media_type + ').'); return null;
+      }
+      epochs.push(epoch);
+      built.push({
+        new_title: (st.title || '').trim(),
+        new_media_id: mid,
+        new_url: url,
+        new_media_type: st.media_type || null,
+        scheduled_at: epoch
+      });
+    }
+    for (var k = 1; k < epochs.length; k++) {
+      if (epochs[k] === epochs[k - 1]) { setError('Steps must not share the same time (no duplicates).'); return null; }
+      if (epochs[k] < epochs[k - 1]) { setError('Steps must be in strictly increasing chronological order.'); return null; }
+    }
+
+    var label = (document.getElementById('series-label-input') || {}).value || '';
+    var stopEl = document.getElementById('series-stop-on-failure');
+    return {
+      ads_account_id: ads,
+      card_id: card.id,
+      card_type: card.card_type,
+      original_title: card.title || '',
+      original_media_id: card.media_id || '',
+      original_url: card.url || '',
+      original_media_width: card.original_media_width,
+      original_media_height: card.original_media_height,
+      original_media_type: card.original_media_type || null,
+      original_aspect_ratio: card.original_aspect_ratio || null,
+      original_post_url: (card.original_post_url || window.__lastPostUrl || ''),
+      series_label: label.trim(),
+      stop_on_failure: !!(stopEl && stopEl.checked),
+      steps: built
+    };
+  }
+
+  async function submitSeries() {
+    var btn = document.getElementById('series-save-btn');
+    var statusEl = document.getElementById('series-save-status');
+    var payload = collectAndValidate();
+    if (!payload) return;
+    if (btn) btn.disabled = true;
+    if (statusEl) { statusEl.textContent = 'Creating series…'; statusEl.style.color = ''; }
+    try {
+      var r = await fetch('/api/schedules/series', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok || j.ok === false) {
+        var msg = (j && (j.detail || j.error)) || 'Failed to create series.';
+        setError(typeof msg === 'string' ? msg : 'Failed to create series.');
+        if (statusEl) { statusEl.textContent = ''; }
+        toast('Could not create series.', true);
+        return;
+      }
+      setError('');
+      if (statusEl) { statusEl.textContent = 'Series created.'; statusEl.style.color = '#4ade80'; setTimeout(function () { if (statusEl && /created/i.test(statusEl.textContent || '')) { statusEl.textContent = ''; statusEl.style.color = ''; } }, 2200); }
+      toast('Series created — updates will run at their scheduled times.');
+      // Reset the builder to a fresh 2-step form.
+      S.steps = [];
+      S.steps.push(newStep());
+      S.steps.push(newStep());
+      render();
+      var lbl = document.getElementById('series-label-input'); if (lbl) lbl.value = '';
+      var stopEl = document.getElementById('series-stop-on-failure'); if (stopEl) stopEl.checked = false;
+      window.__schedulesUserAction = true;
+      try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch (e) {}
+    } catch (e) {
+      setError('Network error while creating the series.');
+      if (statusEl) { statusEl.textContent = ''; }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function wire() {
+    var addBtn = document.getElementById('series-add-step-btn');
+    if (addBtn && !addBtn.__wired) {
+      addBtn.__wired = true;
+      addBtn.onclick = function () { readStateFromDom(); S.steps.push(newStep()); render(); };
+    }
+    var saveBtn = document.getElementById('series-save-btn');
+    if (saveBtn && !saveBtn.__wired) { saveBtn.__wired = true; saveBtn.onclick = submitSeries; }
+
+    var cont = document.getElementById('series-steps');
+    if (cont && !cont.__wired) {
+      cont.__wired = true;
+      // Keep state fresh as the user types (so structural re-renders don't lose input).
+      cont.addEventListener('input', function (e) {
+        var f = e.target && e.target.getAttribute && e.target.getAttribute('data-field');
+        if (!f) return;
+        var card = e.target.closest('[data-step]');
+        if (!card) return;
+        var st = S.steps.find(function (s) { return String(s.id) === String(card.getAttribute('data-step')); });
+        if (st) st[f] = e.target.value;
+      });
+      cont.addEventListener('click', function (e) {
+        var pick = e.target.closest('[data-series-pickmedia]');
+        if (pick) {
+          readStateFromDom();
+          window.__mediaPickerTarget = { kind: 'series', stepId: pick.getAttribute('data-series-pickmedia') };
+          if (window.openMediaPicker) window.openMediaPicker();
+          return;
+        }
+        var clr = e.target.closest('[data-series-clearmedia]');
+        if (clr) {
+          readStateFromDom();
+          var st = S.steps.find(function (s) { return String(s.id) === String(clr.getAttribute('data-series-clearmedia')); });
+          if (st) { st.media_id = ''; st.media_type = ''; st.preview = ''; st.aspect = ''; render(); }
+          return;
+        }
+        var rm = e.target.closest('[data-series-remove]');
+        if (rm) {
+          if (S.steps.length <= 2) return;
+          readStateFromDom();
+          var rid = rm.getAttribute('data-series-remove');
+          S.steps = S.steps.filter(function (s) { return String(s.id) !== String(rid); });
+          render();
+          return;
+        }
+      });
+    }
+  }
+
+  function boot() { wire(); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  setTimeout(boot, 300);
 })();
 </script>
 {% endblock %}
