@@ -2939,9 +2939,13 @@ async def api_create_schedule(payload: ScheduleIn, user: Dict[str, Any] = Depend
                        "Double-check the key and the selected Ads Account, then click Check to confirm it loads."
             )
 
-    parsed = urlparse(payload.new_url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise HTTPException(422, detail="New URL must be a valid http(s) URL.")
+    # App cards show only media on X (no destination URL), so the URL is not user-editable
+    # and may be empty/unchanged — skip the http(s) requirement for them.
+    is_app_card = (payload.card_type or "").strip().lower() == "app"
+    if not is_app_card:
+        parsed = urlparse(payload.new_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise HTTPException(422, detail="New URL must be a valid http(s) URL.")
 
     now = time.time()
     rec = {
@@ -3084,6 +3088,9 @@ async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depe
             pass
 
     parsed_url_scheme = ("http", "https")
+    # App cards show only media on X (no destination URL), so the URL is not user-editable
+    # and may be empty/unchanged — skip the http(s) requirement for them.
+    is_app_card = (payload.card_type or "").strip().lower() == "app"
 
     # --- Validate + build EVERY step before inserting anything (atomic create) ---
     recs: List[Dict[str, Any]] = []
@@ -3117,9 +3124,10 @@ async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depe
                            "media library. Double-check the key and the selected Ads Account."
                 )
 
-        parsed = urlparse(s.new_url)
-        if parsed.scheme not in parsed_url_scheme or not parsed.netloc:
-            raise HTTPException(422, detail=f"Step {idx}: New URL must be a valid http(s) URL.")
+        if not is_app_card:
+            parsed = urlparse(s.new_url)
+            if parsed.scheme not in parsed_url_scheme or not parsed.netloc:
+                raise HTTPException(422, detail=f"Step {idx}: New URL must be a valid http(s) URL.")
 
         rec = {
             "user_id": user["id"],

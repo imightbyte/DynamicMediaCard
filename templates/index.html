@@ -289,7 +289,7 @@
         <div id="cc-id" class="font-mono text-xs break-all bg-background border border-border rounded px-2 py-1 mb-3">—</div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-          <div class="rounded-xl border border-border bg-background p-3">
+          <div id="cc-title-wrap" class="rounded-xl border border-border bg-background p-3">
             <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Title</div>
             <div id="cc-title" class="font-medium break-words">—</div>
           </div>
@@ -302,7 +302,7 @@
               <span id="cc-mtype" class="font-medium"></span>
             </div>
           </div>
-          <div class="md:col-span-2 rounded-xl border border-border bg-background p-3">
+          <div id="cc-url-wrap" class="md:col-span-2 rounded-xl border border-border bg-background p-3">
             <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Destination URL</div>
             <div id="cc-url" class="font-mono text-xs break-all text-primary">—</div>
           </div>
@@ -354,7 +354,7 @@
           <div id="onetime-pane" class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- New Title -->
-            <div>
+            <div id="new-title-wrap">
               <label class="text-xs text-muted-foreground mb-1.5 block">New Title</label>
               <input
                 id="new-title-input"
@@ -404,7 +404,7 @@
             </div>
 
             <!-- New URL -->
-            <div class="md:col-span-2">
+            <div id="new-url-wrap" class="md:col-span-2">
               <label class="text-xs text-muted-foreground mb-1.5 block">New Destination URL</label>
               <input
                 id="new-url-input"
@@ -1374,6 +1374,15 @@
 
       var typeEl = document.getElementById('cc-type');
       if (typeEl) typeEl.textContent = (card.card_type || 'card').toUpperCase();
+
+      // App cards show only media on X (no title / destination URL). Hide those fields in
+      // both the "Current Card" display and the one-time Schedule Update form. Detection is
+      // the backend-normalized card_type === 'app' (see parse_card_response in main.py).
+      var isAppCard = String(card.card_type || '').toLowerCase() === 'app';
+      ['cc-title-wrap', 'cc-url-wrap', 'new-title-wrap', 'new-url-wrap'].forEach(function (wid) {
+        var w = document.getElementById(wid);
+        if (w) w.style.display = isAppCard ? 'none' : '';
+      });
 
       var dimEl = document.getElementById('cc-dim');
       if (dimEl && card.original_media_width && card.original_media_height) {
@@ -3647,6 +3656,7 @@
     body.querySelectorAll('button[data-vcancel]').forEach(function(b){
       var id = parseInt(b.getAttribute('data-vcancel'), 10);
       b.onclick = function(){
+        if (!confirm('Cancel this scheduled update?')) return;
         window.__schedulesUserAction = true;
         // Optimistic: flip badge to "cancelled" and hide the Cancel button immediately.
         try {
@@ -4482,6 +4492,12 @@
     return raw.indexOf('video') !== -1 ? 'video' : 'image';
   }
   function normType(t) { t = (t || '').toLowerCase(); if (!t) return ''; return t.indexOf('video') !== -1 ? 'video' : 'image'; }
+  // App cards show only media on X (no title / destination URL). Hide those inputs in the
+  // series step form and skip URL validation for them (mirrors the one-time flow).
+  function isAppCard() {
+    var card = getLoadedCard();
+    return !!(card && String(card.card_type || '').toLowerCase() === 'app');
+  }
 
   // Epoch (seconds) from a date string + HH:MM interpreted in a fixed UTC offset (mirrors epochFromLocal).
   function epochFromParts(dateStr, timeStr, offHours) {
@@ -4582,6 +4598,7 @@
 
   function stepCardHtml(st, idx) {
     var origType = origMediaType();
+    var appCard = isAppCard();
     var mediaLine;
     if (st.media_id) {
       mediaLine =
@@ -4598,10 +4615,11 @@
           '<button type="button" data-series-remove="' + st.id + '" class="text-[11px] text-red-400 hover:text-red-300"' + (S.steps.length <= 2 ? ' style="display:none"' : '') + '>Remove</button>' +
         '</div>' +
         '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' +
+          (appCard ? '' :
           '<div>' +
             '<label class="text-[11px] text-muted-foreground mb-1 block">New Title</label>' +
             '<input data-field="title" type="text" maxlength="70" value="' + escHtml(st.title) + '" class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" />' +
-          '</div>' +
+          '</div>') +
           '<div>' +
             '<label class="text-[11px] text-muted-foreground mb-1 block">New Media (matches original ' + escHtml(origType) + ')</label>' +
             '<div class="flex items-center gap-2">' +
@@ -4610,10 +4628,11 @@
             '</div>' +
             '<div class="mt-1 text-xs">' + mediaLine + '</div>' +
           '</div>' +
+          (appCard ? '' :
           '<div class="md:col-span-2">' +
             '<label class="text-[11px] text-muted-foreground mb-1 block">New Destination URL</label>' +
             '<input data-field="url" type="url" value="' + escHtml(st.url) + '" placeholder="https://example.com/landing-page" class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" />' +
-          '</div>' +
+          '</div>') +
           '<div class="md:col-span-2">' +
             '<label class="text-[11px] text-muted-foreground mb-1 block">Scheduled time (must be in the future)</label>' +
             '<div class="flex flex-wrap items-end gap-2">' +
@@ -4667,7 +4686,9 @@
       populateSeriesTz();
       if (!S.inited) {
         S.inited = true;
-        if (!S.steps.length) { S.steps.push(newStep()); S.steps.push(newStep()); }
+        // Start with a single Update #1 (defaults from the original card). Further steps are
+        // added only via "Add another update", each snapshotting the previous step's live values.
+        if (!S.steps.length) { S.steps.push(newStep()); }
         render();
       }
     }
@@ -4684,6 +4705,7 @@
     var off = chosenOffset();
     var origType = origMediaType();
     var origMid = (card.media_id || '').trim();
+    var appCard = isAppCard();
     var nowSec = Date.now() / 1000;
     var built = [];
     var epochs = [];
@@ -4693,10 +4715,13 @@
       if (!st.date || !st.time) { setError('Step ' + n + ': choose a date and time.'); return null; }
       var epoch = epochFromParts(st.date, st.time, off);
       if (!epoch || epoch <= nowSec) { setError('Step ' + n + ': scheduled time must be in the future.'); return null; }
-      var url = (st.url || '').trim();
-      var parsed;
-      try { parsed = new URL(url); } catch (e) { parsed = null; }
-      if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) { setError('Step ' + n + ': enter a valid http(s) destination URL.'); return null; }
+      // App cards have no destination URL; keep the card's original URL unchanged and skip validation.
+      var url = appCard ? (card.url || '') : (st.url || '').trim();
+      if (!appCard) {
+        var parsed;
+        try { parsed = new URL(url); } catch (e) { parsed = null; }
+        if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) { setError('Step ' + n + ': enter a valid http(s) destination URL.'); return null; }
+      }
       var mid = (st.media_id || '').trim();
       if (mid && mid !== origMid && st.media_type && origType && normType(st.media_type) !== normType(origType)) {
         setError('Step ' + n + ': media type mismatch (original is ' + origType + ', selected is ' + st.media_type + ').'); return null;
@@ -4755,9 +4780,8 @@
       setError('');
       if (statusEl) { statusEl.textContent = 'Series created.'; statusEl.style.color = '#4ade80'; setTimeout(function () { if (statusEl && /created/i.test(statusEl.textContent || '')) { statusEl.textContent = ''; statusEl.style.color = ''; } }, 2200); }
       toast('Series created — updates will run at their scheduled times.');
-      // Reset the builder to a fresh 2-step form.
+      // Reset the builder to a fresh single-step form.
       S.steps = [];
-      S.steps.push(newStep());
       S.steps.push(newStep());
       render();
       var lbl = document.getElementById('series-label-input'); if (lbl) lbl.value = '';
