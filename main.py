@@ -24,6 +24,7 @@ import sqlite3
 import threading
 import time
 import math
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -166,6 +167,23 @@ def init_db():
         c.execute("ALTER TABLE schedules ADD COLUMN new_preview TEXT")
     except Exception:
         pass
+    # Series columns (multiple-updates feature). One-time rows keep series_id = NULL.
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN series_id TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN series_label TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN step INTEGER")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN stop_on_failure INTEGER")
+    except Exception:
+        pass
     c.execute("""
         CREATE TABLE IF NOT EXISTS tokens (
             x_user_id TEXT PRIMARY KEY,
@@ -183,6 +201,7 @@ def init_db():
     # Indexes for the hot queries (schedule listing / recovery scans, token lookups).
     c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_user_id ON schedules(user_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_series_id ON schedules(series_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_x_user_id ON tokens(x_user_id)")
     conn.commit()
     conn.close()
@@ -212,8 +231,9 @@ def persist_schedule(rec: Dict[str, Any]):
          original_media_width, original_media_height, original_media_type,
          new_title, new_media_id, new_url, new_media_type,
          original_preview, new_preview,
-         scheduled_at, status, result, executed_at, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         scheduled_at, status, result, executed_at, created_at,
+         series_id, series_label, step, stop_on_failure)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         rec.get("id"),
         rec.get("user_id"),
@@ -238,6 +258,10 @@ def persist_schedule(rec: Dict[str, Any]):
         rec.get("result"),
         rec.get("executed_at"),
         rec.get("created_at"),
+        rec.get("series_id"),
+        rec.get("series_label"),
+        rec.get("step"),
+        rec.get("stop_on_failure"),
     ))
     conn.commit()
     conn.close()
@@ -1883,6 +1907,25 @@ async def execute_card_update(schedule: Dict[str, Any], force: bool = False):
             final["executed_at"] = time.time()
             persist_schedule(final)
 
+    # stop_on_failure: if this step ended in "failed" and it belongs to a series configured
+    # to stop after a failure, cancel every still-pending step in the same series. One-time
+    # rows (no series_id) and "continue" series are unaffected.
+    final2 = SCHEDULES.get(sid)
+    if (
+        final2 is not None
+        and final2.get("status") == "failed"
+        and final2.get("series_id")
+        and int(final2.get("stop_on_failure") or 0) == 1
+    ):
+        try:
+            _cancel_remaining_series_steps(
+                final2.get("series_id"),
+                reason="Series stopped after an earlier step failed.",
+                exclude_sid=sid,
+            )
+        except Exception as e:
+            print(f"[scheduler] stop_on_failure cleanup failed for series {final2.get('series_id')}: {e}")
+
 # --------------------------------------------------------------------------------------
 # FastAPI app + templates
 # --------------------------------------------------------------------------------------
@@ -1959,6 +2002,29 @@ class ScheduleIn(BaseModel):
     new_url: str
     new_media_type: Optional[str] = None
     scheduled_at: float
+
+class SeriesStepIn(BaseModel):
+    new_title: str
+    new_media_id: str
+    new_url: str
+    new_media_type: Optional[str] = None
+    scheduled_at: float
+
+class SeriesCreateIn(BaseModel):
+    ads_account_id: str
+    card_id: str
+    card_type: Optional[str] = None
+    original_title: Optional[str] = ""
+    original_media_id: Optional[str] = ""
+    original_url: Optional[str] = ""
+    original_post_url: Optional[str] = None
+    original_media_width: Optional[int] = None
+    original_media_height: Optional[int] = None
+    original_media_type: Optional[str] = None
+    original_aspect_ratio: Optional[str] = None
+    series_label: Optional[str] = ""
+    stop_on_failure: bool = False
+    steps: List[SeriesStepIn]
 
 # --------------------------------------------------------------------------------------
 # Pages
@@ -2947,6 +3013,199 @@ async def api_create_schedule(payload: ScheduleIn, user: Dict[str, Any] = Depend
     add_schedule_job(rec)
     return {"ok": True, "schedule": rec}
 
+def _series_changes(r: dict) -> list[str]:
+    """Human-readable original→new change list for a schedule row (matches single-create output)."""
+    out = []
+    if r.get("new_title") != r.get("original_title"):
+        out.append(f'title: "{r.get("original_title") or ""}" → "{r.get("new_title") or ""}"')
+    if r.get("new_media_id") != r.get("original_media_id"):
+        out.append(f'media key: {r.get("original_media_id") or ""} → {r.get("new_media_id") or ""}')
+    if r.get("new_url") != r.get("original_url"):
+        out.append(f'url → {r.get("new_url") or ""}')
+    if r.get("new_media_type") and r.get("new_media_type") != r.get("original_media_type"):
+        out.append(f'type: {r.get("original_media_type") or "?"} → {r.get("new_media_type")}')
+    return out
+
+def _cancel_remaining_series_steps(series_id: str, reason: str, exclude_sid: Optional[int] = None):
+    """Cancel every still-pending step in a series (remove its scheduler job + persist).
+
+    Used both by the stop_on_failure runtime path and the cancel-series endpoint.
+    """
+    if not series_id:
+        return []
+    cancelled_ids = []
+    for sid, rec in list(SCHEDULES.items()):
+        if rec.get("series_id") != series_id:
+            continue
+        if exclude_sid is not None and int(sid) == int(exclude_sid):
+            continue
+        if rec.get("status") != "pending":
+            continue
+        remove_schedule_job(int(sid))
+        rec["status"] = "cancelled"
+        rec["result"] = reason
+        rec["executed_at"] = rec.get("executed_at") or time.time()
+        persist_schedule(rec)
+        cancelled_ids.append(int(sid))
+    return cancelled_ids
+
+@app.post("/api/schedules/series")
+async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depends(require_user)):
+    steps = payload.steps or []
+    # Decision #5: no hard cap, but a series is 2+ steps (one-time uses the single flow).
+    if len(steps) < 2:
+        raise HTTPException(422, detail="A series must have at least 2 steps.")
+
+    # --- Decision #3: timing rules (validate up-front; create none if any fails) ---
+    now = time.time()
+    times = [s.scheduled_at for s in steps]
+    for idx, t in enumerate(times, start=1):
+        if t <= now:
+            raise HTTPException(422, detail=f"Step {idx}: scheduled time must be in the future.")
+    for i in range(1, len(times)):
+        if times[i] == times[i - 1]:
+            raise HTTPException(422, detail="Steps must not share the same time (no duplicates).")
+        if times[i] < times[i - 1]:
+            raise HTTPException(422, detail="Steps must be in strictly increasing chronological order.")
+
+    access = await refresh_x_token_if_needed(user)
+    secret = user.get("oauth_token_secret", "")
+
+    orig_mid = (payload.original_media_id or "").strip()
+    orig_type = payload.original_media_type
+
+    # Fetch preview for original media once (shared across all steps — same card).
+    orig_preview = None
+    if orig_mid:
+        try:
+            origi = await fetch_media_info(access, payload.ads_account_id, orig_mid, oauth_token_secret=secret)
+            orig_preview = origi.get("preview")
+        except Exception:
+            pass
+
+    parsed_url_scheme = ("http", "https")
+
+    # --- Validate + build EVERY step before inserting anything (atomic create) ---
+    recs: List[Dict[str, Any]] = []
+    for idx, s in enumerate(steps, start=1):
+        new_mid = (s.new_media_id or "").strip()
+        if not new_mid:
+            new_mid = orig_mid
+
+        # Always look up the media we will actually store (populates authoritative type/preview).
+        newi = await fetch_media_info(access, payload.ads_account_id, new_mid or orig_mid, oauth_token_secret=secret)
+        new_type = newi.get("media_type") or s.new_media_type
+        new_preview = newi.get("preview")
+
+        # Enforce media-type compatibility only when the user supplied a *different* key
+        # (identical rule to api_create_schedule).
+        user_supplied_different = bool((s.new_media_id or "").strip() and (s.new_media_id or "").strip() != orig_mid)
+        if user_supplied_different:
+            nt = (new_type or "").strip().lower()
+            ot = (orig_type or "").strip().lower()
+            if nt and ot and nt != ot:
+                raise HTTPException(
+                    422,
+                    detail=f"Step {idx}: media type mismatch — the original media for this card is "
+                           f"{orig_type or 'unknown'}, but the New Media Key you provided is {new_type or 'unknown'}. "
+                           "Updates must use media of the same type (image or video)."
+                )
+            if not nt:
+                raise HTTPException(
+                    422,
+                    detail=f"Step {idx}: could not retrieve details for the New Media Key from the Ads account's "
+                           "media library. Double-check the key and the selected Ads Account."
+                )
+
+        parsed = urlparse(s.new_url)
+        if parsed.scheme not in parsed_url_scheme or not parsed.netloc:
+            raise HTTPException(422, detail=f"Step {idx}: New URL must be a valid http(s) URL.")
+
+        rec = {
+            "user_id": user["id"],
+            "ads_account_id": payload.ads_account_id,
+            "card_id": payload.card_id,
+            "card_type": payload.card_type or "website",
+            "original_title": payload.original_title or "",
+            "original_media_id": payload.original_media_id or "",
+            "original_url": payload.original_url or "",
+            "original_post_url": payload.original_post_url or "",
+            "original_media_width": payload.original_media_width,
+            "original_media_height": payload.original_media_height,
+            "original_media_type": orig_type,
+            "new_title": s.new_title,
+            "new_media_id": new_mid,
+            "new_url": s.new_url,
+            "new_media_type": new_type,
+            "new_preview": new_preview,
+            "scheduled_at": s.scheduled_at,
+            "status": "pending",
+            "result": None,
+            "created_at": now,
+            "executed_at": None,
+            "original_preview": orig_preview,
+        }
+        rec["changes"] = _series_changes(rec)
+        recs.append(rec)
+
+    # All steps validated — assign one series id and insert atomically.
+    series_id = uuid.uuid4().hex
+    series_label = payload.series_label or ""
+    stop_flag = 1 if payload.stop_on_failure else 0
+
+    conn = get_db()
+    c = conn.cursor()
+    inserted: List[Dict[str, Any]] = []
+    try:
+        for step_no, rec in enumerate(recs, start=1):
+            rec["series_id"] = series_id
+            rec["series_label"] = series_label
+            rec["step"] = step_no
+            rec["stop_on_failure"] = stop_flag
+            c.execute("""
+                INSERT INTO schedules
+                (user_id, ads_account_id, card_id, card_type,
+                 original_title, original_media_id, original_url, original_post_url,
+                 original_media_width, original_media_height, original_media_type,
+                 new_title, new_media_id, new_url, new_media_type,
+                 original_preview, new_preview,
+                 scheduled_at, status, result, executed_at, created_at,
+                 series_id, series_label, step, stop_on_failure)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                rec["user_id"], rec["ads_account_id"], rec["card_id"], rec["card_type"],
+                rec["original_title"], rec["original_media_id"], rec["original_url"], rec.get("original_post_url"),
+                rec["original_media_width"], rec["original_media_height"], rec["original_media_type"],
+                rec["new_title"], rec["new_media_id"], rec["new_url"], rec["new_media_type"],
+                rec.get("original_preview"), rec.get("new_preview"),
+                rec["scheduled_at"], rec["status"], rec["result"], rec["executed_at"], rec["created_at"],
+                rec["series_id"], rec["series_label"], rec["step"], rec["stop_on_failure"],
+            ))
+            rec["id"] = c.lastrowid
+            inserted.append(rec)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        conn.close()
+        raise HTTPException(500, detail=f"Failed to create series: {exc}")
+    conn.close()
+
+    # Register memory + DateTrigger jobs only after the whole series persisted.
+    for rec in inserted:
+        SCHEDULES[int(rec["id"])] = rec
+        add_schedule_job(rec)
+
+    return {"ok": True, "series_id": series_id, "series_label": series_label, "schedules": inserted}
+
+@app.post("/api/schedules/series/{series_id}/cancel")
+async def api_cancel_series(series_id: str, user: Dict[str, Any] = Depends(require_user)):
+    # Ensure the series exists and belongs to the caller.
+    owned = [rec for rec in SCHEDULES.values() if rec.get("series_id") == series_id and rec.get("user_id") == user["id"]]
+    if not owned:
+        raise HTTPException(404, "Series not found")
+    cancelled = _cancel_remaining_series_steps(series_id, reason="Series cancelled by user.")
+    return {"ok": True, "cancelled": cancelled}
+
 @app.get("/api/schedules")
 async def api_list_schedules(user: Dict[str, Any] = Depends(require_user)):
     # Primary source: in-memory SCHEDULES dict (always reflects current execution state, including
@@ -3044,6 +3303,23 @@ async def api_list_schedules(user: Dict[str, Any] = Depends(require_user)):
 
         # Attach explicit changes summary for the UI (shows "what will be changed" for pending, "what was changed" for executed)
         rec["changes"] = _compute_changes(rec)
+
+        # Normalize series fields so the frontend can group reliably (one-time rows -> series_id null).
+        rec["series_id"] = rec.get("series_id") or None
+        rec["series_label"] = rec.get("series_label") or None
+        rec["step"] = rec.get("step") if rec.get("step") is not None else None
+        rec["stop_on_failure"] = int(rec.get("stop_on_failure") or 0)
+
+    # Attach a per-series total count so the frontend can show progress without extra derivation.
+    _series_totals: Dict[str, int] = {}
+    for rec in mine:
+        _sid = rec.get("series_id")
+        if _sid:
+            _series_totals[_sid] = _series_totals.get(_sid, 0) + 1
+    for rec in mine:
+        _sid = rec.get("series_id")
+        if _sid:
+            rec["series_total"] = _series_totals.get(_sid, 0)
 
     # Sort order: pending (by scheduled_at ASC) → running/completed/failed (by executed_at DESC) → cancelled (last)
     def _exec_key(r):

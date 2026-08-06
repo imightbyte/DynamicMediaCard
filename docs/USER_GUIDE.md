@@ -67,15 +67,37 @@ If you leave a value the same as the current card, the tool simply won't change 
 
 ## Scheduling the Update
 
+The schedule form has two tabs: **One-time** (a single update) and **Multiple updates** (a series of updates to the same card).
+
+### One-time
+
 - Pick a date and a 24-hour time (HH:MM). The scheduled time must be in the future — a warning appears and saving is blocked if it's in the past.
 - Choose the matching time zone offset (the dropdown lists GMT/UTC offsets).
 - Click **Save Schedule**.
 
 The update runs server-side at the exact time you set (the tool uses APScheduler's date trigger). Schedules are stored so that pending updates still run even if the server restarts before their time. In the schedules list, times are displayed in your browser's local time.
 
+### Multiple updates (series)
+
+Use this tab to schedule several updates to the *same* card in one go — each step with its own media, title, destination URL, and time. This is ideal for building up to a moment: for example, before a World Cup kickoff you might set the card 3 hours out (details A), 2 hours out (B), 1 hour out (C), and 5 minutes out (D).
+
+- Give the series a **label** (e.g. "World Cup kickoff") and choose one shared time zone offset for all steps.
+- Add a **step** for each update — each step has its own media (via the same media picker), title, destination URL, and date/time. Use **Add step** / remove; a series needs at least 2 steps, with no upper limit.
+- Optionally turn on **Stop remaining updates if one fails** — if a step fails, the tool cancels the series' remaining pending steps. Leave it off to let each step run independently.
+- Click **Save Schedule** to create the whole series at once.
+
+Every step must be **in the future**, in **chronological order**, and at **distinct times** — the tool validates this and won't save a series that breaks these rules. As with one-time updates, each step's media must match the card's original media type, and only fields that differ from the card at run time are changed.
+
+Each step runs on its own at its exact time, and (like one-time updates) a series keeps running even if you sign out or the server restarts. After the final step, the card simply stays on that step's creative — there's no automatic revert.
+
 ## Managing Scheduled Updates
 
-Your saved updates appear under **Your Scheduled Updates**. Click **Refresh** to reload the list. Each row shows:
+Your saved updates appear under **Your Scheduled Updates**. Click **Refresh** to reload the list. One-time updates and series are shown differently:
+
+- **One-time updates** appear as a single row (tagged *One-time*).
+- **Multiple updates (series)** appear as one collapsible card tagged *Multiple updates*, showing the series label, progress (e.g. "2 of 4 done"), a status breakdown, and the next upcoming step's time/countdown. Expand it to see every step in order with its own time, media preview, and status.
+
+Each row (a one-time update, or a step within a series) shows:
 
 - The Ads Account ID and card ID, with a colored status badge.
 - **Scheduled** (local time) and, once it has run, **Executed** time.
@@ -98,6 +120,7 @@ Your saved updates appear under **Your Scheduled Updates**. Click **Refresh** to
 
 - **Run now** — execute the update immediately instead of waiting (intended for testing). Available on any row that isn't cancelled or currently running.
 - **Cancel** — available on pending rows; it stops the scheduled run and marks the row cancelled but keeps the record.
+- **Cancel series** — on a series, cancels all of its remaining pending steps at once. You can still cancel individual pending steps from within the expanded series.
 - **Refresh** — reloads the list with the latest statuses.
 
 ## Tips
@@ -108,6 +131,7 @@ Your saved updates appear under **Your Scheduled Updates**. Click **Refresh** to
 - **Keep videos reasonable.** Videos and GIFs are capped at 512 MB and must transcode before they're usable; smaller files upload and process faster. Images are capped at 5 MB.
 - **Make the post public and resolvable.** The tool has to read the live post and card, so the post must exist and be accessible to the signed-in account.
 - **Test with Run now.** Before relying on a schedule, you can trigger it immediately to confirm the new creative applies as expected.
+- **Use a series for build-up moments.** For countdowns, launches, or live events, the Multiple updates tab lets you stage several timed changes on one card at once — and "Stop remaining updates if one fails" keeps a broken step from cascading.
 
 ## Troubleshooting
 
