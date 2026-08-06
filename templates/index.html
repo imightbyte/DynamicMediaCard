@@ -3343,20 +3343,28 @@
   // Helper: compute the list of human changes (original → new) from a schedule record.
   // Used for pending ("Will change") and executed ("Changed") display.
   // Output strings are embedded into innerHTML, so every user-controlled value is HTML-escaped.
-  window.buildScheduleChanges = function buildScheduleChanges(s) {
+  // Computes the human "changed" list for a schedule row relative to a baseline.
+  // By default the baseline is the ORIGINAL post (one-time semantics). For a series step
+  // the caller passes the PREVIOUS step's declared values as the baseline, so a step reads
+  // as "changed" only when it differs from the step before it (first step vs original).
+  window.buildScheduleChanges = function buildScheduleChanges(s, base) {
     if (!s) return [];
+    base = base || {
+      title: s.original_title, media_id: s.original_media_id,
+      url: s.original_url, media_type: s.original_media_type
+    };
     var out = [];
-    if ((s.new_title || '') !== (s.original_title || '')) {
-      out.push('title: "' + escHtml(s.original_title || '') + '" → "' + escHtml(s.new_title || '') + '"');
+    if ((s.new_title || '') !== (base.title || '')) {
+      out.push('title: "' + escHtml(base.title || '') + '" → "' + escHtml(s.new_title || '') + '"');
     }
-    if ((s.new_media_id || '') !== (s.original_media_id || '')) {
-      out.push('media key: ' + escHtml(s.original_media_id || '') + ' → ' + escHtml(s.new_media_id || ''));
+    if ((s.new_media_id || '') !== (base.media_id || '')) {
+      out.push('media key: ' + escHtml(base.media_id || '') + ' → ' + escHtml(s.new_media_id || ''));
     }
-    if ((s.new_url || '') !== (s.original_url || '')) {
+    if ((s.new_url || '') !== (base.url || '')) {
       out.push('url → ' + escHtml(s.new_url || ''));
     }
-    if (s.new_media_type && s.new_media_type !== s.original_media_type) {
-      out.push('type: ' + escHtml(s.original_media_type || '?') + ' → ' + escHtml(s.new_media_type));
+    if (s.new_media_type && s.new_media_type !== (base.media_type || '')) {
+      out.push('type: ' + escHtml(base.media_type || '?') + ' → ' + escHtml(s.new_media_type));
     }
     return out;
   };
@@ -3423,6 +3431,13 @@
       opts = opts || {};
       var sc = statusClass(s.status);
       var when = new Date(((s.scheduled_at||0)*1000)).toLocaleString();
+      // Change-detection baseline. One-time rows compare to the ORIGINAL post; series step
+      // rows receive the PREVIOUS step's declared values via opts.baseline (first step falls
+      // back to original). This only affects the "changed"/preview DISPLAY, never submission.
+      var base = opts.baseline || {
+        title: s.original_title, media_id: s.original_media_id, url: s.original_url,
+        media_type: s.original_media_type, preview: s.original_preview
+      };
       var header;
       if (opts.compact) {
         header = '<div class="flex items-center gap-2">' +
@@ -3445,7 +3460,11 @@
           '<div class="text-xs text-muted-foreground"><span>Scheduled (local time): </span><span class="text-foreground">' + when + '</span></div>' +
           (s.executed_at ? '<div class="text-xs text-muted-foreground"><span>Executed: </span><span class="text-foreground">' + new Date(s.executed_at * 1000).toLocaleString() + '</span></div>' : '') +
           (function(){
-            var ch = (s.changes && s.changes.length) ? s.changes : (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []);
+            // Series rows recompute against the previous-step baseline (ignore any original-based
+            // cached changes); one-time rows reuse the cached original-based changes.
+            var ch = opts.baseline
+              ? (window.buildScheduleChanges ? window.buildScheduleChanges(s, base) : [])
+              : ((s.changes && s.changes.length) ? s.changes : (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []));
             if (ch && ch.length) {
               var label = (s.status === 'pending') ? 'Will change:' : 'Changed:';
               return '<div class="text-[10px] pt-0.5"><span class="text-muted-foreground">' + label + '</span> <span class="text-foreground">' + ch.join('  •  ') + '</span></div>';
@@ -3455,7 +3474,7 @@
           '<div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-0.5 pt-1 text-xs">' +
             '<div><span class="text-muted-foreground">Title:</span> ' + escHtml(s.new_title || '') + '</div>' +
             (function(){
-              var om = s.original_media_id || '';
+              var om = base.media_id || '';
               var nm = s.new_media_id || '';
               if (om && nm && om !== nm) {
                 return '<div><span class="text-muted-foreground">Media key:</span> <span class="font-mono break-all">' + escHtml(om) + ' → ' + escHtml(nm) + '</span></div>';
@@ -3465,9 +3484,9 @@
             '<div class="sm:col-span-3"><span class="text-muted-foreground">URL:</span> <span class="font-mono text-primary break-all">' + escHtml(s.new_url || '') + '</span></div>' +
           '</div>' +
           (function(){
-            var op = s.original_preview || '';
+            var op = base.preview || '';
             var np = s.new_preview || '';
-            var om = s.original_media_id || '';
+            var om = base.media_id || '';
             var nm = s.new_media_id || '';
             if (om && nm && om !== nm && (op || np)) {
               var h = '<div class="pt-1 flex items-center gap-2 text-[10px]"><span class="text-muted-foreground shrink-0">Media previews:</span><div class="flex items-center gap-1.5">';
@@ -3536,7 +3555,17 @@
       }
 
       var stepsInner = '';
-      steps.forEach(function(s, i){ stepsInner += rowHtml(s, { compact:true, stepIndex:(i+1) }); });
+      steps.forEach(function(s, i){
+        // Baseline = the PREVIOUS step's declared values (chained semantics). The first step
+        // falls back to the original post so it still reads as "changed vs original".
+        var prev = i > 0 ? steps[i - 1] : null;
+        var baseline = prev
+          ? { title: prev.new_title, media_id: prev.new_media_id, url: prev.new_url,
+              media_type: prev.new_media_type, preview: prev.new_preview }
+          : { title: s.original_title, media_id: s.original_media_id, url: s.original_url,
+              media_type: s.original_media_type, preview: s.original_preview };
+        stepsInner += rowHtml(s, { compact:true, stepIndex:(i+1), baseline: baseline });
+      });
 
       return '<div class="p-4 space-y-2" data-series-group="' + escHtml(seriesId) + '">' +
         '<div class="flex flex-col md:flex-row md:items-start gap-3">' +
