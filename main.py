@@ -74,6 +74,12 @@ FERNET = _get_fernet()
 SESSION_SALT = "cardxploder-session-v1"
 signer = URLSafeSerializer(SECRET_KEY, salt=SESSION_SALT)
 
+# Sliding idle timeout for the browser session. If an authenticated user makes no
+# request for longer than this, the next request is treated as unauthenticated (401)
+# and a full "Sign in with X" is required. This only gates UI/browser access; it never
+# touches the OAuth tokens the background scheduler relies on.
+SESSION_IDLE_SECONDS = 60 * 60
+
 # OAuth 1.0a endpoints (required for X Ads API user context)
 X_REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token"
 X_ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token"
@@ -399,17 +405,31 @@ def get_oauth1_headers(method: str, url: str, user: dict, extra_params: dict | N
 # --------------------------------------------------------------------------------------
 
 def create_session_cookie(x_user_id: str) -> str:
-    return signer.dumps({"xuid": x_user_id})
+    return signer.dumps({"xuid": x_user_id, "ts": int(time.time())})
 
-def _xuid_from_cookie(request: Request) -> Optional[str]:
-    raw = request.cookies.get("session")
+def _decode_session(raw: Optional[str]) -> Optional[str]:
+    """Return the xuid from a signed session cookie iff the signature is valid and the
+    embedded last-seen timestamp is within the sliding idle window; otherwise None
+    (treated as unauthenticated). Legacy cookies without a timestamp are treated as
+    expired so the user simply re-authenticates."""
     if not raw:
         return None
     try:
         data = signer.loads(raw)
     except BadSignature:
         return None
-    return data.get("xuid") or None
+    if not isinstance(data, dict):
+        return None
+    xuid = data.get("xuid")
+    ts = data.get("ts")
+    if not xuid or not isinstance(ts, (int, float)):
+        return None
+    if time.time() - ts > SESSION_IDLE_SECONDS:
+        return None
+    return xuid
+
+def _xuid_from_cookie(request: Request) -> Optional[str]:
+    return _decode_session(request.cookies.get("session"))
 
 def _build_user_dict(xuid: str) -> Dict[str, Any]:
     """Build the runtime user dict. TOKENS holds encrypted values (both OAuth1 and
@@ -1868,11 +1888,40 @@ async def execute_card_update(schedule: Dict[str, Any], force: bool = False):
 # --------------------------------------------------------------------------------------
 
 app = FastAPI(title="Dynamic Media Card Tool", docs_url=None, redoc_url=None)
+
+# Sliding idle refresh: on every request that carries a still-valid "session" cookie,
+# re-issue it with a fresh last-seen timestamp so activity keeps the session alive. If
+# the cookie is present but expired/invalid, clear it so the browser returns to a clean
+# unauthenticated state. The auth-mutating endpoints manage their own cookie, so skip
+# them to avoid emitting conflicting Set-Cookie headers.
+_SESSION_COOKIE_SELF_MANAGED = {"/logout", "/callback"}
+
+@app.middleware("http")
+async def sliding_session_refresh(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path in _SESSION_COOKIE_SELF_MANAGED:
+        return response
+    raw = request.cookies.get("session")
+    if not raw:
+        return response
+    xuid = _decode_session(raw)
+    if xuid:
+        response.set_cookie(
+            "session", create_session_cookie(xuid),
+            httponly=True, secure=COOKIE_SECURE, samesite="lax", path="/",
+        )
+    else:
+        response.delete_cookie("session", path="/")
+    return response
+
+# Session cookie for the transient OAuth handshake state only. max_age=None makes it a
+# real session cookie (cleared on browser close); it must not outlive the browser or
+# contradict the idle policy above.
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
     session_cookie="cardx_session",
-    max_age=60 * 60 * 24 * 30,
+    max_age=None,
     same_site="lax",
     https_only=COOKIE_SECURE,
 )
@@ -2134,7 +2183,7 @@ async def callback(
         request.session.pop("oauth1_request_token_secret", None)
 
         resp = RedirectResponse("/")
-        resp.set_cookie("session", create_session_cookie(xuid), httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=60*60*24*90, path="/")
+        resp.set_cookie("session", create_session_cookie(xuid), httponly=True, secure=COOKIE_SECURE, samesite="lax", path="/")
         return resp
 
     # Legacy OAuth2 path (still supported for non-Ads flows)
@@ -2195,7 +2244,7 @@ async def callback(
     persist_token(xuid, TOKENS[xuid])
 
     resp = RedirectResponse("/")
-    resp.set_cookie("session", create_session_cookie(xuid), httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=60*60*24*90, path="/")
+    resp.set_cookie("session", create_session_cookie(xuid), httponly=True, secure=COOKIE_SECURE, samesite="lax", path="/")
     request.session.pop("pkce_verifier", None)
     request.session.pop("oauth_state", None)
     return resp

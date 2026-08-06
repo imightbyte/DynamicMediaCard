@@ -504,6 +504,40 @@
 
 {% block scripts %}
 <script>
+  // === SESSION EXPIRY HANDLING ===
+  // The server enforces a 60-minute sliding idle timeout and a browser-close session
+  // cookie. When the session lapses, protected /api endpoints answer 401. We intercept
+  // any same-origin 401 once, stop pollers, and send the user back to the signed-out
+  // hero so they can "Sign in with X" again (full OAuth re-auth, by design). The server
+  // is the source of truth — no aggressive client-side timer logs users out early.
+  // True only when the page was server-rendered for a logged-in user. A 401 is treated
+  // as an expired session (→ redirect to sign-in) ONLY in that case, so the signed-out
+  // hero — where /api/ads-accounts legitimately 401s — never reload-loops.
+  window.__isAuthed = {{ 'true' if user else 'false' }};
+  window.__sessionExpiredHandled = false;
+  window.__handleSessionExpired = function() {
+    if (!window.__isAuthed || window.__sessionExpiredHandled) return;
+    window.__sessionExpiredHandled = true;
+    try { if (typeof __stopRunningPoller === 'function') __stopRunningPoller(); } catch (e) {}
+    try { if (typeof __stopLeaderElection === 'function') __stopLeaderElection(); } catch (e) {}
+    try { window.location.assign('/'); } catch (e) { window.location.href = '/'; }
+  };
+
+  (function () {
+    var __nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+    if (!__nativeFetch) return;
+    window.fetch = function (input, init) {
+      return __nativeFetch(input, init).then(function (resp) {
+        try {
+          var url = (typeof input === 'string') ? input : (input && input.url) || '';
+          var sameOrigin = url.indexOf('http') !== 0 || url.indexOf(window.location.origin) === 0;
+          if (resp && resp.status === 401 && sameOrigin) window.__handleSessionExpired();
+        } catch (e) {}
+        return resp;
+      });
+    };
+  })();
+
   // === SCHEDULE TIME HELPERS (date + 24h time inputs, combined "YYYY-MM-DDTHH:mm" for logic) ===
   // Timezone dropdown shows only GMT/UTC offsets (no cities). We store a numeric offset in hours.
 
