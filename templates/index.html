@@ -3434,6 +3434,7 @@
       return '<div class="p-4 flex flex-col md:flex-row md:items-start gap-3">' +
         '<div class="flex-1 space-y-1">' +
           header +
+          (!opts.compact && s.original_post_url ? '<div class="text-xs text-muted-foreground"><span>Post: </span><a href="' + escHtml(s.original_post_url) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(s.original_post_url) + '</a></div>' : '') +
           '<div class="text-xs text-muted-foreground"><span>Scheduled (local time): </span><span class="text-foreground">' + when + '</span></div>' +
           (s.executed_at ? '<div class="text-xs text-muted-foreground"><span>Executed: </span><span class="text-foreground">' + new Date(s.executed_at * 1000).toLocaleString() + '</span></div>' : '') +
           (function(){
@@ -3544,6 +3545,7 @@
             '<div class="text-[11px] text-muted-foreground">' +
               '<span class="font-mono">' + escHtml((steps[0] && steps[0].ads_account_id) || '') + '</span> · card: <span class="font-mono">' + escHtml((steps[0] && steps[0].card_id) || '') + '</span>' +
             '</div>' +
+            (function(){ var pu = (steps[0] && steps[0].original_post_url) || ''; return pu ? '<div class="text-[11px] text-muted-foreground">Post: <a href="' + escHtml(pu) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(pu) + '</a></div>' : ''; })() +
             '<div class="text-[11px] text-muted-foreground">' + escHtml(breakdownParts.join(' · ')) + '</div>' +
             nextInfo +
           '</div>' +
