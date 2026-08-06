@@ -331,17 +331,24 @@
           </h2>
 
           <!-- Create-mode tabs: One-time (existing single schedule) vs Multiple updates (series) -->
-          <div id="schedule-tabs" class="flex gap-1 border-b border-border">
-            <button type="button" id="tab-onetime-btn"
-                    onclick="window.switchScheduleTab && window.switchScheduleTab('onetime')"
-                    class="px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-border bg-muted text-foreground">
-              One-time
-            </button>
-            <button type="button" id="tab-series-btn"
-                    onclick="window.switchScheduleTab && window.switchScheduleTab('series')"
-                    class="px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-transparent text-muted-foreground hover:bg-muted/40">
-              Multiple updates (series)
-            </button>
+          <div class="space-y-2">
+            <div id="schedule-tabs" class="inline-flex items-center gap-1 p-1 rounded-xl bg-muted/50 border border-border">
+              <button type="button" id="tab-onetime-btn"
+                      onclick="window.switchScheduleTab && window.switchScheduleTab('onetime')"
+                      class="px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-primary-foreground shadow-sm transition-colors">
+                One-time update
+              </button>
+              <button type="button" id="tab-series-btn"
+                      onclick="window.switchScheduleTab && window.switchScheduleTab('series')"
+                      class="px-4 py-2 text-sm font-medium rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                Multiple updates
+              </button>
+            </div>
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              <span class="font-medium text-foreground">One-time update</span> — a single scheduled update.
+              <span class="px-1 text-border">|</span>
+              <span class="font-medium text-foreground">Multiple updates</span> — several scheduled updates for the same card, run in order as a series.
+            </p>
           </div>
 
           <div id="onetime-pane" class="space-y-4">
@@ -4414,8 +4421,8 @@
     var serPane = document.getElementById('series-pane');
     var oneBtn = document.getElementById('tab-onetime-btn');
     var serBtn = document.getElementById('tab-series-btn');
-    var activeCls = 'px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-border bg-muted text-foreground';
-    var idleCls = 'px-3 py-1.5 text-xs rounded-t-lg border border-b-0 border-transparent text-muted-foreground hover:bg-muted/40';
+    var activeCls = 'px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-primary-foreground shadow-sm transition-colors';
+    var idleCls = 'px-4 py-2 text-sm font-medium rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors';
     var series = (which === 'series');
     if (onePane) onePane.style.display = series ? 'none' : '';
     if (serPane) serPane.style.display = series ? '' : 'none';
@@ -4482,7 +4489,20 @@
   function newStep(parts) {
     var off = chosenOffset();
     var p = parts || defaultParts(off, S.steps.length + 1);
-    return { id: ++S.seq, media_id: '', media_type: '', preview: '', aspect: '', title: '', url: '', date: p.date, time: p.time };
+    // Prefill editable fields with the original post's current values (same source the
+    // one-time form uses: the loaded card's title/media/url) so users edit from real defaults.
+    var card = getLoadedCard() || {};
+    return {
+      id: ++S.seq,
+      media_id: card.media_id || '',
+      media_type: card.original_media_type || card.inferred_media_type || '',
+      preview: card.media_preview || '',
+      aspect: card.original_aspect_ratio || '',
+      title: card.title || '',
+      url: card.url || '',
+      date: p.date,
+      time: p.time
+    };
   }
 
   function populateSeriesTz() {
