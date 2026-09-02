@@ -39,6 +39,8 @@ The Account ID field is what the tool actually uses for every action. Clicking a
 
 The post must contain a website card or app card. If it does, the tool reads the live card and shows a read-only **Current Card** (uneditable) panel with the current Title, Destination URL, and a Media Preview. These are the values your scheduled update will replace.
 
+> **Website cards vs. app cards.** On website cards you can update the media, title, and destination URL. App cards show only their media on X, so the tool hides **Title** and **Destination URL** in the Current Card panel (and in the Schedule Update form) — for app cards, an update changes the media only.
+
 ## Choosing the New Media
 
 In the **Schedule Update** form, click **Select new media** to open the media picker. It has two tabs:
@@ -47,6 +49,8 @@ In the **Schedule Update** form, click **Select new media** to open the media pi
 - **Upload** — pick a local file to upload. A progress bar shows upload and processing status; videos and GIFs are transcoded on X's side, so the tool polls until processing finishes before the media is usable.
 
 Selecting or uploading media fills in the **New Media Key**, and its type, aspect ratio, and preview load automatically.
+
+When you load a card, the media field (along with New Title and New Destination URL) is **prefilled with the card's current values**, so you edit from the current creative rather than from blank fields. Leave a field as-is to keep it unchanged.
 
 ### Accepted formats and size limits
 
@@ -63,13 +67,15 @@ The new media must match the original card's media type — you can't replace an
 - **New Title** — the card's headline/name (up to 70 characters).
 - **New Destination URL** — where the card sends people who click it (placeholder `https://example.com/landing-page`). It must be a valid http(s) URL.
 
-If you leave a value the same as the current card, the tool simply won't change it — only the fields that differ are updated.
+Both fields are **prefilled with the card's current values** when you load the post, so you're editing the current title/URL rather than starting from blank. If you leave a value the same as the current card, the tool simply won't change it — only the fields that differ are updated.
+
+> **App cards:** because app cards expose only their media on X, the **New Title** and **New Destination URL** inputs are hidden for them (in the one-time form and in every series step). App-card updates change the media only; the title and URL are left unchanged and aren't required or validated.
 
 ## Scheduling the Update
 
-The schedule form has two tabs: **One-time** (a single update) and **Multiple updates** (a series of updates to the same card).
+The schedule form has a segmented control with two modes: **One-time update** and **Multiple updates**. A helper caption under the control explains the difference — *One-time update* is a single scheduled update, while *Multiple updates* is several scheduled updates to the same card, run in order as a series.
 
-### One-time
+### One-time update
 
 - Pick a date and a 24-hour time (HH:MM). The scheduled time must be in the future — a warning appears and saving is blocked if it's in the past.
 - Choose the matching time zone offset (the dropdown lists GMT/UTC offsets).
@@ -77,16 +83,18 @@ The schedule form has two tabs: **One-time** (a single update) and **Multiple up
 
 The update runs server-side at the exact time you set (the tool uses APScheduler's date trigger). Schedules are stored so that pending updates still run even if the server restarts before their time. In the schedules list, times are displayed in your browser's local time.
 
-### Multiple updates (series)
+### Multiple updates
 
-Use this tab to schedule several updates to the *same* card in one go — each step with its own media, title, destination URL, and time. This is ideal for building up to a moment: for example, before a World Cup kickoff you might set the card 3 hours out (details A), 2 hours out (B), 1 hour out (C), and 5 minutes out (D).
+Use this mode to schedule several updates to the *same* card in one go — each step with its own media, title, destination URL, and time. This is ideal for building up to a moment: for example, a countdown that changes the card 3 hours out, then 2 hours out, then 1 hour out, then 5 minutes out.
 
-- Give the series a **label** (e.g. "World Cup kickoff") and choose one shared time zone offset for all steps.
-- Add a **step** for each update — each step has its own media (via the same media picker), title, destination URL, and date/time. Use **Add step** / remove; a series needs at least 2 steps, with no upper limit.
+- Give the series a **Series name (label)** (placeholder `e.g. Countdown 1`) and choose one shared time zone offset for all steps.
+- The builder starts with a **single step — "Update #1"**. Its title, URL, and media are prefilled from the original loaded card.
+- Click **+ Add step** to append the next update. Each newly added step is **prefilled from the step immediately before it** (its current, edited title, URL, and media) — so the form reads as a running sequence of edits. Adjust whatever you want to change for that step; anything you leave inherits from the previous step. You can **Remove** extra steps.
+- A series needs **at least 2 steps** (a single step shows an inline error, *"A series needs at least 2 steps."*) and has **no upper limit**.
 - Optionally turn on **Stop remaining updates if one fails** — if a step fails, the tool cancels the series' remaining pending steps. Leave it off to let each step run independently.
-- Click **Save Schedule** to create the whole series at once.
+- Click **Create series** to create the whole series at once.
 
-Every step must be **in the future**, in **chronological order**, and at **distinct times** — the tool validates this and won't save a series that breaks these rules. As with one-time updates, each step's media must match the card's original media type, and only fields that differ from the card at run time are changed.
+Every step must be **in the future**, in **chronological order**, and at **distinct times** — the tool validates this and won't save a series that breaks these rules. As with one-time updates, each step's media must match the card's original media type. (For app cards, the per-step Title and Destination URL are hidden and each step updates the media only.)
 
 Each step runs on its own at its exact time, and (like one-time updates) a series keeps running even if you sign out or the server restarts. After the final step, the card simply stays on that step's creative — there's no automatic revert.
 
@@ -97,14 +105,18 @@ Your saved updates appear under **Your Scheduled Updates**. Click **Refresh** to
 - **One-time updates** appear as a single row (tagged *One-time*).
 - **Multiple updates (series)** appear as one collapsible card tagged *Multiple updates*, showing the series label, progress (e.g. "2 of 4 done"), a status breakdown, and the next upcoming step's time/countdown. Expand it to see every step in order with its own time, media preview, and status.
 
+The original **post appears as a clickable link** — on one-time rows and on the series header — that opens the X post in a new tab.
+
 Each row (a one-time update, or a step within a series) shows:
 
 - The Ads Account ID and card ID, with a colored status badge.
 - **Scheduled** (local time) and, once it has run, **Executed** time.
 - A **Will change:** (pending) / **Changed:** (executed) summary.
-- The new Title, Media key (shown as old → new when the media changes), and URL.
-- Media previews — small old → new thumbnails when the media is being swapped.
+- The new Title, Media key (shown as *baseline → new* when the media changes), and URL.
+- Media previews — small *baseline → new* thumbnails when the media is being swapped.
 - A result message on completed, failed, or cancelled rows.
+
+The **Will change / Changed** summary and the media-preview comparison are computed against a **baseline**: for a **one-time** row the baseline is the original post; for a **series step** the baseline is the **previous step** (and the first step is compared against the original post). So a series step is flagged as "changed" only when it differs from the step before it — for example, if an earlier step swapped the media and a later step reverts it to the original, that later step shows *previous → original*.
 
 ### Statuses
 
@@ -118,9 +130,11 @@ Each row (a one-time update, or a step within a series) shows:
 
 ### Row actions
 
-- **Run now** — execute the update immediately instead of waiting (intended for testing). Available on any row that isn't cancelled or currently running.
-- **Cancel** — available on pending rows; it stops the scheduled run and marks the row cancelled but keeps the record.
-- **Cancel series** — on a series, cancels all of its remaining pending steps at once. You can still cancel individual pending steps from within the expanded series.
+Each of these actions first opens an **in-app confirmation dialog** (not the browser's native pop-up); dismissing it does nothing.
+
+- **Run now** — execute the update immediately instead of waiting (intended for testing). Available on any row that isn't cancelled or currently running. The dialog offers **Run now** / **Not now**.
+- **Cancel** — available on pending rows; it stops the scheduled run and marks the row cancelled but keeps the record. The dialog offers **Cancel update** / **Keep it**.
+- **Cancel series** — on a series, cancels all of its remaining pending steps at once. You can still cancel individual pending steps from within the expanded series. The dialog offers **Cancel series** / **Keep them**.
 - **Refresh** — reloads the list with the latest statuses.
 
 ## Tips
