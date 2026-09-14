@@ -1,0 +1,680 @@
+<!--
+  Client-side UI localization (English / Korean / Japanese).
+
+  Scope: presentation only. This layer never changes app flow, request payloads,
+  validation rules, or anything sent to the X Ads API - it only swaps the text a
+  user reads. English is the default and is always the fallback for a missing key.
+
+  How it works:
+    - Static markup is tagged with data-i18n="key" (and data-i18n-placeholder /
+      data-i18n-title / data-i18n-html variants). applyI18n() walks a subtree and
+      rewrites those nodes.
+    - Imperatively rendered markup (schedules list, media picker, series builder)
+      calls window.t('key', 'English fallback') while building its HTML, so a
+      re-render always produces the active language.
+    - A MutationObserver re-translates any subtree injected after load, so
+      innerHTML renders that carry data-i18n attributes localize themselves.
+    - The original English is captured into data-i18n-src on first pass, so
+      switching back to English restores the exact source text.
+
+  Terminology note: translations follow the wording X Ads and comparable ad /
+  scheduling tools use in each locale (e.g. ja ウェブサイトカード・見出し・リンク先URL,
+  ko 웹사이트 카드・제목・연결 URL) rather than literal word-for-word translation.
+-->
+<script>
+(function () {
+  'use strict';
+
+  var DEFAULT_LANG = 'en';
+  var SUPPORTED = ['en', 'ko', 'ja'];
+  var STORAGE_KEY = 'dmc_ui_lang';
+
+  // ---------------------------------------------------------------------------
+  // Dictionaries. Keys are stable ids; the English source text lives in the
+  // markup / t() fallbacks, so an untranslated key degrades to English.
+  // ---------------------------------------------------------------------------
+  var DICT = {
+    ko: {
+      // --- nav ---
+      'nav.updateCard': '카드 업데이트',
+      'nav.schedules': '예약 목록',
+      'nav.signedInAs': '로그인 계정',
+      'nav.signOut': '로그아웃',
+      'nav.signIn': 'X로 로그인',
+      'nav.language': '언어',
+
+      // --- signed-out hero ---
+      'hero.badge': 'X 전용',
+      'hero.title': 'Dynamic Media Card Tool',
+      'hero.subtitle': 'X 웹사이트 카드와 앱 카드를 예약한 시간에 업데이트합니다.<br>아래 버튼으로 로그인하세요 — 이 도구는 <span class="font-medium">X 로그인만</span> 지원합니다.',
+      'hero.preflightTitle': '“X로 로그인”을 누르기 전에:',
+      'hero.preflightBody': '같은 브라우저에서 x.com에 접속해, 미디어를 변경하려는 게시물을 소유한 X 계정으로 로그인(또는 계정 전환)하세요.',
+      'hero.signIn': 'X로 로그인',
+      'hero.requires': 'X Ads에 접근할 수 있는 X 계정이 필요합니다.',
+
+      // --- oauth error panel ---
+      'oauth.title': 'X 로그인이 완료되지 않았습니다',
+      'oauth.commonFix': '“To use this App you have to be logged in to X.” 오류의 가장 흔한 해결 방법:',
+      'oauth.fix1html': 'developer.x.com에서 앱/프로젝트를 만든 <strong>동일한 X 계정</strong>으로 로그인하세요.',
+      'oauth.fix2': '개발자 포털에서: 프로젝트 → 앱 → User authentication settings → OAuth 1.0a가 켜져 있는지 확인하세요(레거시 경로를 쓴다면 OAuth 2.0도).',
+      'oauth.fix3html': '아래 콜백 URI를 <span class="font-mono text-foreground">정확히 그대로</span> 등록하세요(복사해서 사용):',
+      'oauth.fix4html': '그런 다음 <span class="font-mono">.env</span>의 <span class="font-mono">X_REDIRECT_URI</span>에 같은 값을 넣고 서버를 재시작하세요.',
+      'oauth.fix5html': '프로젝트/앱에 Ads API가 활성화되어 있는지도 확인하세요. 로컬에서는 <span class="font-mono">localhost</span>가 아니라 <span class="font-mono">127.0.0.1</span>을 사용하세요.',
+      'oauth.profileTitle': 'OAuth1 로그인 후 프로필 조회에 실패했습니다.',
+      'oauth.profileBody': 'Consumer Key와 X가 발급한 토큰으로 서명한 프로필 조회 요청이 “Bad Authentication data” 오류로 거부되었습니다.',
+      'oauth.profileCheck': '다음을 확인하세요:',
+      'oauth.profile1html': '앱에 OAuth 1.0a가 <strong>활성화</strong>되어 있어야 합니다(OAuth 2.0과는 별개입니다).',
+      'oauth.profile2html': '정확한 <span class="font-mono">콜백 URL</span>이 <strong>OAuth 1.0a</strong> 설정 영역에 등록되어 있어야 합니다.',
+      'oauth.profile3html': 'OAuth 2.0의 Client ID/Secret이 아니라 <strong>Consumer Keys</strong>(API Key + Secret)를 복사했는지 확인하세요.',
+      'oauth.profile4': '앱 권한이 “Read and write”로 설정되어 있어야 합니다.',
+      'oauth.profile5': 'developer.x.com에서 설정을 변경한 뒤에는 30초 정도 기다렸다가 서버를 완전히 재시작하고, 페이지를 강력 새로고침한 다음 다시 로그인해 보세요.',
+
+      // --- ads account ---
+      'ads.title': 'X Ads 계정',
+      'ads.accountId': '계정 ID',
+      'ads.findAt': '— 확인 위치:',
+      'ads.findAtTail': '→ 계정 설정',
+      'ads.detecting': '감지 중…',
+      'ads.placeholder': '예: abc123def',
+      'ads.detected': '감지된 계정',
+      'ads.reload': '다시 불러오기',
+      'ads.noneDetectedHtml': 'Ads API나 이전 예약에서 이 X 사용자의 광고 계정을 찾지 못했습니다. 위 입력란에 광고 계정 ID를 직접 붙여넣어도 됩니다. 확인 위치: <a href="https://ads.x.com" target="_blank" class="underline">ads.x.com</a> → 계정 설정.',
+      'ads.seeError': '아래 오류를 확인하세요. 광고 계정 ID를 직접 붙여넣어도 됩니다.',
+      'ads.loadFailed': '계정을 불러오지 못했습니다:',
+      'ads.loadFailedTail': '. 계정 ID를 직접 붙여넣어도 됩니다.',
+      'ads.badgeActive': '활성',
+      'ads.badgeRequired': '필수',
+
+      // --- load post ---
+      'post.title': '웹사이트 카드 또는 앱 카드가 있는 게시물 링크를 입력하세요',
+      'post.signedInVia': 'X 계정으로 로그인됨:',
+      'post.signOutRestart': '로그아웃 후 다시 시작',
+      'post.noServerUser': '(이 렌더링에는 서버 사용자 정보가 없습니다)',
+      'post.urlLabel': 'X 게시물 URL',
+      'post.urlHelp': '웹사이트 카드나 앱 카드를 사용하는 게시물 링크를 붙여넣은 뒤 버튼을 누르거나 Enter를 치세요.',
+      'post.validate': '게시물 확인 후 카드 불러오기',
+      'post.setAdsFirst': '위에서 X Ads 계정 ID를 먼저 설정하세요.',
+
+      // --- current card ---
+      'card.title': '현재 카드 (수정 불가)',
+      'card.badge': '카드',
+      'card.idLabel': '카드 ID (게시물 기준):',
+      'card.fieldTitle': '제목',
+      'card.fieldMediaKey': '미디어 키',
+      'card.fieldType': '유형:',
+      'card.fieldUrl': '연결 URL',
+      'card.mediaPreview': '미디어 미리보기',
+      'card.readNote': '이 값들은 실제 카드(또는 광고 정보를 가져올 수 없을 때는 게시물)에서 읽어온 것입니다. 아래에서 새 값을 예약할 수 있습니다.',
+
+      // --- schedule form ---
+      'form.title': '업데이트 예약',
+      'form.tabOnetime': '1회 업데이트',
+      'form.tabSeries': '연속 업데이트',
+      'form.tabCaptionOnetimeName': '1회 업데이트',
+      'form.tabCaptionOnetimeDesc': ' — 한 번만 실행되는 예약 업데이트입니다.',
+      'form.tabCaptionSeriesName': '연속 업데이트',
+      'form.tabCaptionSeriesDesc': ' — 같은 카드에 여러 업데이트를 예약해 순서대로 실행합니다.',
+      'form.newTitle': '새 제목',
+      'form.newMediaKey': '새 미디어 키',
+      'form.mediaPlaceholder': '예: 3_1234567890123456789',
+      'form.selectMedia': '새 미디어 선택',
+      'form.selectMediaTitle': '미디어 라이브러리를 둘러보거나 새 파일을 업로드합니다',
+      'form.mediaHelp': '“새 미디어 선택”을 눌러 라이브러리에서 고르거나(원본과 같은 미디어 유형만 표시) 파일을 업로드하세요. 유형·가로세로 비율·미리보기는 자동으로 채워집니다.',
+      'form.newUrl': '새 연결 URL',
+      'form.urlPlaceholder': 'https://example.com/landing-page',
+      'form.scheduledTime': '예약 시간 (미래 시간이어야 합니다)',
+      'form.date': '날짜',
+      'form.time24': '시간 (24시간제)',
+      'form.timePlaceholder': 'HH:MM',
+      'form.pastWarning': '예약 시간은 미래여야 합니다.',
+      'form.timezone': '시간대',
+      'form.save': '예약 저장',
+      'form.saving': '저장 중…',
+      'form.saveNote': '예약한 시간에 업데이트가 적용됩니다.',
+
+      // --- series builder ---
+      'series.label': '시리즈 이름 (라벨)',
+      'series.labelPlaceholder': '예: 카운트다운 1',
+      'series.timezone': '시간대 (모든 단계 공통)',
+      'series.stopOnFailure': '하나라도 실패하면 남은 업데이트를 중단합니다 (해제하면 남은 단계도 계속 실행됩니다)',
+      'series.addStep': '+ 단계 추가',
+      'series.create': '시리즈 만들기',
+      'series.createNote': '모든 업데이트가 각자 예약된 시간에 같은 카드에 적용됩니다.',
+      'series.stepHeading': '업데이트',
+      'series.remove': '삭제',
+      'series.minSteps': '시리즈는 최소 2개의 단계가 필요합니다.',
+      'series.updateN': '업데이트 #{n}',
+      'series.newMediaLabel': '새 미디어 (원본과 동일한 {type})',
+      'series.noNewMedia': '새 미디어를 선택하지 않았습니다 (원본 {type} 유지).',
+      'series.selectMedia': '미디어 선택',
+      'series.clear': '지우기',
+      'series.errLoadCard': '먼저 카드를 불러오고 X Ads 계정 ID를 선택하세요 (1회 업데이트 탭).',
+      'series.errStepDateTime': '{n}단계: 날짜와 시간을 선택하세요.',
+      'series.errStepFuture': '{n}단계: 예약 시간은 미래여야 합니다.',
+      'series.errStepUrl': '{n}단계: 올바른 http(s) 연결 URL을 입력하세요.',
+
+      // --- schedules list ---
+      'list.title': '예약된 업데이트',
+      'list.refresh': '새로고침',
+      'list.empty': '아직 예약이 없습니다. 위에서 카드를 불러와 첫 예약 업데이트를 만들어 보세요.',
+      'list.footnote': '예약된 업데이트는 지정한 시각에 서버에서 실행됩니다(APScheduler). “지금 실행”은 테스트용입니다.',
+      'list.step': '{n}단계',
+      'list.card': '카드:',
+      'list.post': '게시물: ',
+      'list.scheduled': '예약 시간 (현지 시간): ',
+      'list.executed': '실행 시간: ',
+      'list.willChange': '변경 예정:',
+      'list.changed': '변경됨:',
+      'list.fTitle': '제목:',
+      'list.fMediaKey': '미디어 키:',
+      'list.fUrl': 'URL:',
+      'list.mediaPreviews': '미디어 미리보기:',
+      'list.tagOneTime': '1회',
+      'list.tagSeries': '연속 업데이트',
+      'list.ofDone': '{total}개 중 {done}개 완료',
+      'list.next': '다음: ',
+      'list.untitledSeries': '이름 없는 시리즈',
+      'list.cancel': '취소',
+      'list.runNow': '지금 실행',
+      'list.cancelSeries': '시리즈 취소',
+      'list.cardUpdated': '카드가 업데이트되었습니다.',
+      'list.cardUpdatedPost': '카드가 업데이트되었습니다. 게시물: ',
+      // statuses
+      'status.pending': '대기 중',
+      'status.running': '실행 중',
+      'status.completed': '완료',
+      'status.failed': '실패',
+      'status.cancelled': '취소됨',
+      // series progress breakdown
+      'bd.done': '{n}개 완료',
+      'bd.pending': '{n}개 대기 중',
+      'bd.running': '{n}개 실행 중',
+      'bd.failed': '{n}개 실패',
+      'bd.cancelled': '{n}개 취소됨',
+      // countdown
+      'cd.dueNow': '곧 실행',
+      'cd.days': '{d}일 {h}시간 후',
+      'cd.hours': '{h}시간 {m}분 후',
+      'cd.minutes': '{m}분 후',
+
+      // --- confirm modal ---
+      'confirm.defaultTitle': '계속할까요?',
+      'confirm.defaultAccept': '확인',
+      'confirm.defaultDismiss': '돌아가기',
+      'confirm.cancelSeriesTitle': '이 시리즈의 대기 중인 업데이트를 모두 취소할까요?',
+      'confirm.cancelSeriesMsg': '이 시리즈에서 대기 중인 업데이트가 모두 취소됩니다.',
+      'confirm.cancelSeriesAccept': '시리즈 취소',
+      'confirm.cancelSeriesDismiss': '유지하기',
+      'confirm.cancelOneTitle': '이 예약 업데이트를 취소할까요?',
+      'confirm.cancelOneMsg': '업데이트가 실행되지 않습니다. 되돌릴 수 없습니다.',
+      'confirm.cancelOneAccept': '업데이트 취소',
+      'confirm.cancelOneDismiss': '유지하기',
+      'confirm.runNowTitle': '이 업데이트를 지금 실행할까요?',
+      'confirm.runNowMsg': '예약된 시간이 아니라 지금 바로 업데이트를 실행합니다.',
+      'confirm.runNowAccept': '지금 실행',
+      'confirm.runNowDismiss': '나중에',
+
+      // --- media picker ---
+      'picker.title': '새 미디어 선택',
+      'picker.showing': '원본과 동일한 {type} 미디어를 표시하고 있습니다',
+      'picker.close': '닫기',
+      'picker.tabBrowse': '라이브러리에서 선택',
+      'picker.tabUpload': '업로드',
+      'picker.searchPlaceholder': '미디어 검색…',
+      'picker.search': '검색',
+      'picker.loading': '미디어를 불러오는 중…',
+      'picker.empty': '미디어를 찾을 수 없습니다.',
+      'picker.untitled': '(제목 없음)',
+      'picker.loadingMore': '불러오는 중…',
+      'picker.loadMore': '더 보기',
+      'picker.uploadLabel': '새 {type} 파일 업로드',
+
+      // --- toasts / inline status ---
+      'msg.pasteUrl': 'X 게시물 URL을 입력하세요.',
+      'msg.adsRequired': '먼저 X Ads 계정 ID를 입력하거나 선택하세요.',
+      'msg.adsRequiredShort': 'X Ads 계정 ID가 필요합니다.',
+      'msg.adsRequiredMedia': '미디어를 조회하려면 X Ads 계정 ID가 필요합니다.',
+      'msg.noCardLoaded': '불러온 카드가 없습니다. 먼저 게시물을 확인하세요.',
+      'msg.mediaKeyRequired': '새 미디어 키가 필요합니다.',
+      'msg.enterMediaKey': '먼저 미디어 키를 입력하세요.',
+      'msg.noMediaKeyReturned': '선택한 미디어의 미디어 키를 가져오지 못했습니다.',
+      'msg.timeMustBeFuture': '예약 시간은 미래여야 합니다.',
+      'msg.scheduleSaved': '예약이 저장되었습니다.',
+      'msg.scheduleSavedRun': '예약이 저장되었습니다. 지정한 시간에 실행됩니다.',
+      'msg.saveFailed': '저장하지 못했습니다.',
+      'msg.netSaveSchedule': '예약을 저장하는 중 네트워크 오류가 발생했습니다.',
+      'msg.netValidate': '게시물을 확인하는 중 네트워크 오류가 발생했습니다.',
+      'msg.netMediaInfo': '미디어 정보를 불러오는 중 네트워크 오류가 발생했습니다.',
+      'msg.netRunNow': '지금 실행하는 중 네트워크 오류가 발생했습니다.',
+      'msg.mediaInfoFailed': '미디어 정보를 불러오지 못했습니다.',
+      'msg.mediaDetailsFailed': '미디어 정보를 불러오지 못했습니다.',
+      'msg.seriesCreated': '시리즈가 생성되었습니다.',
+      'msg.seriesCreatedRun': '시리즈가 생성되었습니다. 각 업데이트가 예약된 시간에 실행됩니다.',
+      'msg.seriesCreating': '시리즈를 만드는 중…',
+      'msg.seriesFailed': '시리즈를 만들지 못했습니다.',
+      'msg.seriesCancelFailed': '시리즈를 취소하지 못했습니다.',
+      'msg.runStarted': '실행을 시작했습니다 — 상태가 자동으로 갱신됩니다.',
+      'msg.runNowPrefix': '지금 실행: ',
+      'msg.runNowFailed': '지금 실행에 실패했습니다 (자세한 내용은 목록에서 확인하세요)',
+
+      // --- footer ---
+      'footer.tos': '서비스 약관',
+      'footer.tosHref': 'https://x.com/ko/tos',
+      'footer.privacy': '개인정보 처리방침',
+      'footer.privacyHref': 'https://x.com/ko/privacy',
+      'footer.devAgreement': '개발자 계약 및 정책',
+      'footer.api': 'API',
+      'footer.adsTerms': '광고 약관',
+      'footer.adsPolicies': '광고 정책',
+      'footer.adsPoliciesHref': 'https://business.x.com/ko/help/ads-policies',
+      'footer.nullcast': 'Promoted-Only (Nullcast) 게시물',
+      'footer.adsApi': 'Ads API',
+      'footer.dataFlow': '데이터 처리 방식',
+      'footer.dataFlowBody': 'Dynamic Media Card Tool은 사용자가 인증한 계정으로 X API v2와 X Ads API를 통해 카드를 업데이트합니다. 이 앱을 사용하면 여기에 연결된 X의 약관 및 개인정보 처리방침에 동의하는 것으로 간주됩니다. 이 앱은 X에 업데이트를 예약하고 전송하는 데 필요한 범위를 넘어서 카드 콘텐츠를 저장하지 않습니다.',
+      'footer.takedown': '홍보 콘텐츠에 대한 게시 중단 요청이나 콘텐츠 관련 문의는 담당 X CAM/영업 담당자에게 연락하세요.'
+    },
+
+    ja: {
+      // --- nav ---
+      'nav.updateCard': 'カードを更新',
+      'nav.schedules': '予約一覧',
+      'nav.signedInAs': 'ログイン中',
+      'nav.signOut': 'ログアウト',
+      'nav.signIn': 'Xでログイン',
+      'nav.language': '言語',
+
+      // --- signed-out hero ---
+      'hero.badge': 'X専用',
+      'hero.title': 'Dynamic Media Card Tool',
+      'hero.subtitle': 'Xのウェブサイトカード・アプリカードを指定した日時に更新します。<br>下のボタンからログインしてください — このツールは<span class="font-medium">Xログインのみ</span>に対応しています。',
+      'hero.preflightTitle': '「Xでログイン」を押す前に:',
+      'hero.preflightBody': '同じブラウザでx.comを開き、メディアを変更したいポストを所有しているXアカウントでログイン（またはアカウントを切り替え）してください。',
+      'hero.signIn': 'Xでログイン',
+      'hero.requires': 'X AdsにアクセスできるXアカウントが必要です。',
+
+      // --- oauth error panel ---
+      'oauth.title': 'Xへのログインが完了しませんでした',
+      'oauth.commonFix': '「To use this App you have to be logged in to X.」が出る場合の最も一般的な対処:',
+      'oauth.fix1html': 'developer.x.comでアプリ／プロジェクトを作成したのと<strong>同じXアカウント</strong>でログインしてください。',
+      'oauth.fix2': '開発者ポータルで: プロジェクト → アプリ → User authentication settings → OAuth 1.0a が有効になっているか確認してください（レガシー経路を使う場合は OAuth 2.0 も）。',
+      'oauth.fix3html': '以下のコールバックURIを<span class="font-mono text-foreground">そのまま正確に</span>登録してください（コピーして使用）:',
+      'oauth.fix4html': 'さらに<span class="font-mono">.env</span>の<span class="font-mono">X_REDIRECT_URI</span>にも同じ値を設定し、サーバーを再起動してください。',
+      'oauth.fix5html': 'プロジェクト／アプリでAds APIが有効になっていることも確認してください。ローカルでは<span class="font-mono">localhost</span>ではなく<span class="font-mono">127.0.0.1</span>を使用します。',
+      'oauth.profileTitle': 'OAuth1ログイン後のプロフィール取得に失敗しました。',
+      'oauth.profileBody': 'Consumer KeyとXから受け取ったトークンで署名したプロフィール取得リクエストが「Bad Authentication data」で拒否されました。',
+      'oauth.profileCheck': '次の点を確認してください:',
+      'oauth.profile1html': 'アプリでOAuth 1.0aが<strong>有効</strong>になっていること（OAuth 2.0とは別設定です）。',
+      'oauth.profile2html': '正確な<span class="font-mono">コールバックURL</span>が<strong>OAuth 1.0a</strong>の設定欄に登録されていること。',
+      'oauth.profile3html': 'OAuth 2.0のClient ID／Secretではなく、<strong>Consumer Keys</strong>（API Key + Secret）をコピーしていること。',
+      'oauth.profile4': 'アプリの権限が「Read and write」になっていること。',
+      'oauth.profile5': 'developer.x.comで設定を変更した後は30秒ほど待ち、サーバーを完全に再起動してからページをハード再読み込みし、もう一度ログインしてください。',
+
+      // --- ads account ---
+      'ads.title': 'X Ads アカウント',
+      'ads.accountId': 'アカウントID',
+      'ads.findAt': '— 確認場所:',
+      'ads.findAtTail': '→ アカウント設定',
+      'ads.detecting': '検出中…',
+      'ads.placeholder': '例: abc123def',
+      'ads.detected': '検出されたアカウント',
+      'ads.reload': '再取得',
+      'ads.noneDetectedHtml': 'Ads APIや過去の予約から、このXユーザーの広告アカウントを検出できませんでした。上の入力欄に広告アカウントIDを直接貼り付けることもできます。確認場所: <a href="https://ads.x.com" target="_blank" class="underline">ads.x.com</a> → アカウント設定。',
+      'ads.seeError': '下のエラーを確認してください。広告アカウントIDを直接貼り付けることもできます。',
+      'ads.loadFailed': 'アカウントを読み込めませんでした:',
+      'ads.loadFailedTail': '。IDを直接貼り付けることもできます。',
+      'ads.badgeActive': '有効',
+      'ads.badgeRequired': '必須',
+
+      // --- load post ---
+      'post.title': 'ウェブサイトカードまたはアプリカードが付いたポストのリンクを入力',
+      'post.signedInVia': 'Xでログイン中:',
+      'post.signOutRestart': 'ログアウトして最初からやり直す',
+      'post.noServerUser': '（このレンダリングにサーバー側のユーザー情報がありません）',
+      'post.urlLabel': 'XポストURL',
+      'post.urlHelp': 'ウェブサイトカードまたはアプリカードを使っているポストのリンクを貼り付け、ボタンを押すかEnterキーを押してください。',
+      'post.validate': 'ポストを確認してカードを読み込む',
+      'post.setAdsFirst': '先に上のX Ads アカウントIDを設定してください。',
+
+      // --- current card ---
+      'card.title': '現在のカード（編集不可）',
+      'card.badge': 'カード',
+      'card.idLabel': 'カードID（ポストから取得）:',
+      'card.fieldTitle': '見出し',
+      'card.fieldMediaKey': 'メディアキー',
+      'card.fieldType': '種類:',
+      'card.fieldUrl': 'リンク先URL',
+      'card.mediaPreview': 'メディアプレビュー',
+      'card.readNote': 'これらの値は実際のカード（広告情報を取得できない場合はポスト）から読み取ったものです。下で新しい値を予約できます。',
+
+      // --- schedule form ---
+      'form.title': '更新を予約',
+      'form.tabOnetime': '単発更新',
+      'form.tabSeries': '複数更新',
+      'form.tabCaptionOnetimeName': '単発更新',
+      'form.tabCaptionOnetimeDesc': ' — 1回だけ実行する予約更新です。',
+      'form.tabCaptionSeriesName': '複数更新',
+      'form.tabCaptionSeriesDesc': ' — 同じカードに複数の更新を予約し、順番に実行します。',
+      'form.newTitle': '新しい見出し',
+      'form.newMediaKey': '新しいメディアキー',
+      'form.mediaPlaceholder': '例: 3_1234567890123456789',
+      'form.selectMedia': '新しいメディアを選択',
+      'form.selectMediaTitle': 'メディアライブラリから選ぶか、新しいファイルをアップロードします',
+      'form.mediaHelp': '「新しいメディアを選択」をクリックして、ライブラリから選ぶ（元と同じメディア種類のみ表示）かファイルをアップロードしてください。種類・アスペクト比・プレビューは自動で読み込まれます。',
+      'form.newUrl': '新しいリンク先URL',
+      'form.urlPlaceholder': 'https://example.com/landing-page',
+      'form.scheduledTime': '予約日時（未来の日時を指定してください）',
+      'form.date': '日付',
+      'form.time24': '時刻（24時間表記）',
+      'form.timePlaceholder': 'HH:MM',
+      'form.pastWarning': '予約日時は未来の日時にしてください。',
+      'form.timezone': 'タイムゾーン',
+      'form.save': '予約を保存',
+      'form.saving': '保存中…',
+      'form.saveNote': '予約した日時に更新が適用されます。',
+
+      // --- series builder ---
+      'series.label': 'シリーズ名（ラベル）',
+      'series.labelPlaceholder': '例: カウントダウン1',
+      'series.timezone': 'タイムゾーン（全ステップ共通）',
+      'series.stopOnFailure': '1つ失敗したら残りの更新を中止する（オフの場合は残りのステップも実行されます）',
+      'series.addStep': '+ ステップを追加',
+      'series.create': 'シリーズを作成',
+      'series.createNote': 'すべての更新が、それぞれの予約日時に同じカードへ適用されます。',
+      'series.stepHeading': '更新',
+      'series.remove': '削除',
+      'series.minSteps': 'シリーズには少なくとも2つのステップが必要です。',
+      'series.updateN': '更新 #{n}',
+      'series.newMediaLabel': '新しいメディア（元と同じ{type}）',
+      'series.noNewMedia': '新しいメディアが選択されていません（元の{type}のまま）。',
+      'series.selectMedia': 'メディアを選択',
+      'series.clear': 'クリア',
+      'series.errLoadCard': '先にカードを読み込み、X Ads アカウントIDを選択してください（単発更新タブ）。',
+      'series.errStepDateTime': 'ステップ{n}: 日付と時刻を選択してください。',
+      'series.errStepFuture': 'ステップ{n}: 予約日時は未来の日時にしてください。',
+      'series.errStepUrl': 'ステップ{n}: 有効なhttp(s)のリンク先URLを入力してください。',
+
+      // --- schedules list ---
+      'list.title': '予約した更新',
+      'list.refresh': '再読み込み',
+      'list.empty': 'まだ予約はありません。上でカードを読み込んで、最初の予約更新を作成してください。',
+      'list.footnote': '予約した更新は指定時刻にサーバー側で実行されます（APScheduler）。「今すぐ実行」はテスト用です。',
+      'list.step': 'ステップ{n}',
+      'list.card': 'カード:',
+      'list.post': 'ポスト: ',
+      'list.scheduled': '予約日時（現地時間）: ',
+      'list.executed': '実行日時: ',
+      'list.willChange': '変更予定:',
+      'list.changed': '変更済み:',
+      'list.fTitle': '見出し:',
+      'list.fMediaKey': 'メディアキー:',
+      'list.fUrl': 'URL:',
+      'list.mediaPreviews': 'メディアプレビュー:',
+      'list.tagOneTime': '単発',
+      'list.tagSeries': '複数更新',
+      'list.ofDone': '{total}件中{done}件完了',
+      'list.next': '次回: ',
+      'list.untitledSeries': '名称未設定のシリーズ',
+      'list.cancel': '取り消す',
+      'list.runNow': '今すぐ実行',
+      'list.cancelSeries': 'シリーズを取り消す',
+      'list.cardUpdated': 'カードを更新しました。',
+      'list.cardUpdatedPost': 'カードを更新しました。ポスト: ',
+      // statuses
+      'status.pending': '待機中',
+      'status.running': '実行中',
+      'status.completed': '完了',
+      'status.failed': '失敗',
+      'status.cancelled': 'キャンセル済み',
+      // series progress breakdown
+      'bd.done': '完了{n}件',
+      'bd.pending': '待機中{n}件',
+      'bd.running': '実行中{n}件',
+      'bd.failed': '失敗{n}件',
+      'bd.cancelled': 'キャンセル済み{n}件',
+      // countdown
+      'cd.dueNow': 'まもなく実行',
+      'cd.days': '{d}日{h}時間後',
+      'cd.hours': '{h}時間{m}分後',
+      'cd.minutes': '{m}分後',
+
+      // --- confirm modal ---
+      'confirm.defaultTitle': '実行しますか？',
+      'confirm.defaultAccept': 'OK',
+      'confirm.defaultDismiss': '戻る',
+      'confirm.cancelSeriesTitle': 'このシリーズの待機中の更新をすべて取り消しますか？',
+      'confirm.cancelSeriesMsg': 'このシリーズの待機中の更新がすべて取り消されます。',
+      'confirm.cancelSeriesAccept': 'シリーズを取り消す',
+      'confirm.cancelSeriesDismiss': 'そのままにする',
+      'confirm.cancelOneTitle': 'この予約更新を取り消しますか？',
+      'confirm.cancelOneMsg': '更新は実行されなくなります。この操作は元に戻せません。',
+      'confirm.cancelOneAccept': '更新を取り消す',
+      'confirm.cancelOneDismiss': 'そのままにする',
+      'confirm.runNowTitle': 'この更新を今すぐ実行しますか？',
+      'confirm.runNowMsg': '予約した日時ではなく、今すぐ更新を実行します。',
+      'confirm.runNowAccept': '今すぐ実行',
+      'confirm.runNowDismiss': '今はしない',
+
+      // --- media picker ---
+      'picker.title': '新しいメディアを選択',
+      'picker.showing': '元のカードと同じ{type}メディアを表示しています',
+      'picker.close': '閉じる',
+      'picker.tabBrowse': 'ライブラリから選択',
+      'picker.tabUpload': 'アップロード',
+      'picker.searchPlaceholder': 'メディアを検索…',
+      'picker.search': '検索',
+      'picker.loading': 'メディアを読み込み中…',
+      'picker.empty': 'メディアが見つかりませんでした。',
+      'picker.untitled': '（名称未設定）',
+      'picker.loadingMore': '読み込み中…',
+      'picker.loadMore': 'さらに読み込む',
+      'picker.uploadLabel': '新しい{type}ファイルをアップロード',
+
+      // --- toasts / inline status ---
+      'msg.pasteUrl': 'XポストのURLを入力してください。',
+      'msg.adsRequired': '先にX Ads アカウントIDを入力または選択してください。',
+      'msg.adsRequiredShort': 'X Ads アカウントIDが必要です。',
+      'msg.adsRequiredMedia': 'メディアを検索するにはX Ads アカウントIDが必要です。',
+      'msg.noCardLoaded': '読み込まれたカードがありません。先にポストを確認してください。',
+      'msg.mediaKeyRequired': '新しいメディアキーが必要です。',
+      'msg.enterMediaKey': '先にメディアキーを入力してください。',
+      'msg.noMediaKeyReturned': '選択したメディアのメディアキーを取得できませんでした。',
+      'msg.timeMustBeFuture': '予約日時は未来の日時にしてください。',
+      'msg.scheduleSaved': '予約を保存しました。',
+      'msg.scheduleSavedRun': '予約を保存しました。指定した日時に実行されます。',
+      'msg.saveFailed': '保存できませんでした。',
+      'msg.netSaveSchedule': '予約の保存中にネットワークエラーが発生しました。',
+      'msg.netValidate': 'ポストの確認中にネットワークエラーが発生しました。',
+      'msg.netMediaInfo': 'メディア情報の読み込み中にネットワークエラーが発生しました。',
+      'msg.netRunNow': '今すぐ実行の処理中にネットワークエラーが発生しました。',
+      'msg.mediaInfoFailed': 'メディア情報を読み込めませんでした。',
+      'msg.mediaDetailsFailed': 'メディアの詳細を読み込めませんでした。',
+      'msg.seriesCreated': 'シリーズを作成しました。',
+      'msg.seriesCreatedRun': 'シリーズを作成しました。各更新は予約した日時に実行されます。',
+      'msg.seriesCreating': 'シリーズを作成中…',
+      'msg.seriesFailed': 'シリーズを作成できませんでした。',
+      'msg.seriesCancelFailed': 'シリーズを取り消せませんでした。',
+      'msg.runStarted': '実行を開始しました — ステータスは自動的に更新されます。',
+      'msg.runNowPrefix': '今すぐ実行: ',
+      'msg.runNowFailed': '今すぐ実行に失敗しました（詳細は一覧をご確認ください）',
+
+      // --- footer ---
+      'footer.tos': '利用規約',
+      'footer.tosHref': 'https://x.com/ja/tos',
+      'footer.privacy': 'プライバシーポリシー',
+      'footer.privacyHref': 'https://x.com/ja/privacy',
+      'footer.devAgreement': '開発者契約およびポリシー',
+      'footer.api': 'API',
+      'footer.adsTerms': '広告規約',
+      'footer.adsPolicies': '広告ポリシー',
+      'footer.adsPoliciesHref': 'https://business.x.com/ja/help/ads-policies',
+      'footer.nullcast': 'Promoted-Only（Nullcast）投稿',
+      'footer.adsApi': 'Ads API',
+      'footer.dataFlow': 'データの取り扱い',
+      'footer.dataFlowBody': 'Dynamic Media Card Tool は、認証されたアカウントを使用して X API v2 および X Ads API 経由でカードを更新します。本アプリを利用することで、ここにリンクされている X の規約およびプライバシーポリシーに同意したものとみなされます。本アプリは、X への更新の予約・送信に必要な範囲を超えてカードの内容を保持しません。',
+      'footer.takedown': 'プロモーションコンテンツに関する削除依頼やコンテンツについてのお問い合わせは、担当の X CAM／セールス担当者までご連絡ください。'
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Engine
+  // ---------------------------------------------------------------------------
+  function normalizeLang(l) {
+    l = String(l == null ? '' : l).toLowerCase().trim();
+    if (l === 'kr' || l === 'ko-kr') l = 'ko';
+    if (l === 'jp' || l === 'ja-jp') l = 'ja';
+    return SUPPORTED.indexOf(l) !== -1 ? l : DEFAULT_LANG;
+  }
+
+  var current = DEFAULT_LANG;
+  try { current = normalizeLang(window.localStorage.getItem(STORAGE_KEY)); } catch (e) {}
+
+  function getLang() { return current; }
+
+  // t(key, englishFallback) - returns the active language's string, or the
+  // English fallback (never an empty/blank label).
+  function t(key, fallback) {
+    var fb = (fallback == null) ? key : fallback;
+    if (current === DEFAULT_LANG) return fb;
+    var table = DICT[current];
+    if (!table) return fb;
+    var v = table[key];
+    return (v == null || v === '') ? fb : v;
+  }
+
+  // tf(key, englishFallback, vars) - same as t() but substitutes {name} tokens, so
+  // each language can place numbers/types wherever its word order requires.
+  function tf(key, fallback, vars) {
+    var s = t(key, fallback);
+    if (!vars) return s;
+    return s.replace(/\{(\w+)\}/g, function (m, name) {
+      return Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : m;
+    });
+  }
+
+  // Capture the original English once so switching back to English is lossless.
+  function srcOf(el, attr, read) {
+    var stash = 'data-i18n-src-' + attr;
+    if (!el.hasAttribute(stash)) el.setAttribute(stash, read());
+    return el.getAttribute(stash);
+  }
+
+  function translateEl(el) {
+    var key;
+
+    key = el.getAttribute('data-i18n');
+    if (key) {
+      el.textContent = t(key, srcOf(el, 'text', function () { return el.textContent; }));
+    }
+
+    key = el.getAttribute('data-i18n-html');
+    if (key) {
+      el.innerHTML = t(key, srcOf(el, 'html', function () { return el.innerHTML; }));
+    }
+
+    key = el.getAttribute('data-i18n-placeholder');
+    if (key) {
+      el.setAttribute('placeholder', t(key, srcOf(el, 'ph', function () { return el.getAttribute('placeholder') || ''; })));
+    }
+
+    key = el.getAttribute('data-i18n-title');
+    if (key) {
+      el.setAttribute('title', t(key, srcOf(el, 'title', function () { return el.getAttribute('title') || ''; })));
+    }
+
+    key = el.getAttribute('data-i18n-aria-label');
+    if (key) {
+      el.setAttribute('aria-label', t(key, srcOf(el, 'aria', function () { return el.getAttribute('aria-label') || ''; })));
+    }
+
+    // Some X pages publish real Japanese/Korean versions at their own URLs, so a
+    // localized label should point at the localized page rather than the English one.
+    key = el.getAttribute('data-i18n-href');
+    if (key) {
+      el.setAttribute('href', t(key, srcOf(el, 'href', function () { return el.getAttribute('href') || ''; })));
+    }
+  }
+
+  var SELECTOR = '[data-i18n],[data-i18n-html],[data-i18n-placeholder],[data-i18n-title],[data-i18n-aria-label],[data-i18n-href]';
+
+  function applyI18n(root) {
+    root = root || document.body;
+    if (!root || root.nodeType !== 1) return;
+    try {
+      if (root.matches && root.matches(SELECTOR)) translateEl(root);
+      var nodes = root.querySelectorAll ? root.querySelectorAll(SELECTOR) : [];
+      for (var i = 0; i < nodes.length; i++) translateEl(nodes[i]);
+    } catch (e) { /* localization must never break the app */ }
+  }
+
+  // Re-translate subtrees injected by the imperative renderers.
+  var observer = null;
+  function startObserver() {
+    if (observer || !window.MutationObserver || !document.body) return;
+    observer = new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var added = records[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          if (added[j].nodeType === 1) applyI18n(added[j]);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // Areas that are rendered imperatively from cached state. Re-running these on a
+  // language switch relabels them without any network call or state change.
+  function rerenderDynamic() {
+    var calls = [
+      window.__rerenderSchedulesForLang,
+      window.__rerenderSeriesForLang,
+      window.__syncAdsBadgeAndPillsUI
+    ];
+    for (var i = 0; i < calls.length; i++) {
+      try { if (typeof calls[i] === 'function') calls[i](); } catch (e) {}
+    }
+  }
+
+  function setLang(lang) {
+    current = normalizeLang(lang);
+    try { window.localStorage.setItem(STORAGE_KEY, current); } catch (e) {}
+    try {
+      document.documentElement.setAttribute('lang', current === 'en' ? 'en-GB' : current);
+    } catch (e) {}
+    applyI18n(document.body);
+    rerenderDynamic();
+    try {
+      window.dispatchEvent(new CustomEvent('dmc-lang-changed', { detail: { lang: current } }));
+    } catch (e) {}
+  }
+
+  function initSelector() {
+    var sel = document.getElementById('lang-select');
+    if (!sel) return;
+    sel.value = current;
+    sel.addEventListener('change', function () { setLang(sel.value); });
+  }
+
+  window.t = t;
+  window.tf = tf;
+  window.applyI18n = applyI18n;
+  window.setLang = setLang;
+  window.getLang = getLang;
+  window.I18N_DICT = DICT;
+
+  function boot() {
+    initSelector();
+    if (current !== DEFAULT_LANG) {
+      try { document.documentElement.setAttribute('lang', current); } catch (e) {}
+      applyI18n(document.body);
+      rerenderDynamic();
+    }
+    startObserver();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
+</script>

@@ -87,10 +87,10 @@
             X
           </h3>
           <ul class="space-y-2">
-            <li><a href="https://x.com/en/tos" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Terms of Service</a></li>
-            <li><a href="https://x.com/en/privacy" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Privacy Policy</a></li>
-            <li><a href="https://developer.x.com/en/developer-terms/agreement-and-policy" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Developer Agreement &amp; Policy</a></li>
-            <li><a href="https://developer.x.com/en/docs" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">API</a></li>
+            <li><a href="https://x.com/en/tos" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.tos" data-i18n-href="footer.tosHref">Terms of Service</a></li>
+            <li><a href="https://x.com/en/privacy" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.privacy" data-i18n-href="footer.privacyHref">Privacy Policy</a></li>
+            <li><a href="https://docs.x.com/developer-terms/policy" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.devAgreement">Developer Agreement &amp; Policy</a></li>
+            <li><a href="https://docs.x.com/x-api/introduction" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.api">API</a></li>
           </ul>
         </div>
 
@@ -104,10 +104,10 @@
             X Ads
           </h3>
           <ul class="space-y-2">
-            <li><a href="https://business.x.com/en/help/ads-policies/introduction-to-x-ads/x-ads-terms.html" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Ads Terms</a></li>
-            <li><a href="https://business.x.com/en/help/ads-policies.html" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Ads Policies</a></li>
-            <li><a href="https://business.x.com/en/help/ads-policies/product-policies/promoted-only-tweets.html" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Promoted-Only (Nullcast) Policy</a></li>
-            <li><a href="https://developer.x.com/en/docs/x-ads-api" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Ads API</a></li>
+            <li><a href="https://legal.x.com/ads-terms.html" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.adsTerms">Ads Terms</a></li>
+            <li><a href="https://business.x.com/en/help/ads-policies" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.adsPolicies" data-i18n-href="footer.adsPoliciesHref">Ads Policies</a></li>
+            <li><a href="https://docs.x.com/x-ads-api/campaign-management" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.nullcast">Promoted-Only (Nullcast) Posts</a></li>
+            <li><a href="https://docs.x.com/x-ads-api/introduction" target="_blank" rel="noopener noreferrer" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="footer.adsApi">Ads API</a></li>
           </ul>
         </div>
 
@@ -117,9 +117,9 @@
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
-            How your data flows
+            <span data-i18n="footer.dataFlow">How your data flows</span>
           </h3>
-          <p class="text-sm text-muted-foreground leading-relaxed">
+          <p class="text-sm text-muted-foreground leading-relaxed" data-i18n="footer.dataFlowBody">
             Dynamic Media Card Tool updates cards via the X API v2 and the X Ads API
             using your authorized account. By using this app you agree to X's
             terms and privacy policies linked here. The app does not persist
@@ -130,13 +130,17 @@
       </div>
 
       <div class="mt-10 pt-6 border-t border-border">
-        <p class="text-xs text-muted-foreground">
+        <p class="text-xs text-muted-foreground" data-i18n="footer.takedown">
           For takedown requests or content concerns regarding promoted
           content, contact your X CAM/Sales representative.
         </p>
       </div>
     </div>
   </footer>
+
+  {# UI localization engine. Must load before the scripts block so window.t()
+     is defined by the time index.html's renderers run. #}
+  {% include "_i18n.html" %}
 
   {% block scripts %}{% endblock %}
 </body>

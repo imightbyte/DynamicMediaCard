@@ -13,22 +13,35 @@
           </svg>
           Dynamic Media Card Tool
         </a>
-        <a href="#update" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Update Card</a>
-        <a href="#schedules" class="text-sm text-muted-foreground hover:text-foreground transition-colors">Schedules</a>
+        <a href="#update" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="nav.updateCard">Update Card</a>
+        <a href="#schedules" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="nav.schedules">Schedules</a>
       </div>
 
-      <div x-data="userBanner({{ (user | tojson) if user else 'null' }})" x-init="init()" x-ignore class="flex items-center gap-3">
+      <div class="flex items-center gap-3">
+        <!-- UI language selector. Presentation only: it swaps displayed text and
+             persists the choice locally. English is the default. -->
+        <select id="lang-select"
+                aria-label="Language"
+                data-i18n-aria-label="nav.language"
+                class="text-xs bg-muted/50 border border-border rounded-lg px-2 py-1 text-muted-foreground hover:text-foreground focus:ring-1 focus:ring-primary focus:border-primary cursor-pointer">
+          <option value="en">English</option>
+          <option value="ko">한국어</option>
+          <option value="ja">日本語</option>
+        </select>
+
+        <div x-data="userBanner({{ (user | tojson) if user else 'null' }})" x-init="init()" x-ignore class="flex items-center gap-3">
         {% if user %}
         <div class="flex items-center gap-2 text-sm">
-          <span class="text-muted-foreground">Signed in as</span>
+          <span class="text-muted-foreground" data-i18n="nav.signedInAs">Signed in as</span>
           <strong>@{{ user.username }}</strong>
-          <a href="/logout" class="text-xs text-primary hover:underline px-2 py-0.5">Sign out</a>
+          <a href="/logout" class="text-xs text-primary hover:underline px-2 py-0.5" data-i18n="nav.signOut">Sign out</a>
         </div>
         {% else %}
         <template x-if="!user && !loading">
-          <a href="/login" class="btn-primary text-xs py-1.5 px-4">Sign in with X</a>
+          <a href="/login" class="btn-primary text-xs py-1.5 px-4" data-i18n="nav.signIn">Sign in with X</a>
         </template>
         {% endif %}
+        </div>
       </div>
     </div>
   </nav>
@@ -63,31 +76,31 @@
       <!-- Prominent error box when the OAuth roundtrip failed -->
       <template x-if="oauthError">
         <div class="mb-8 rounded-2xl border border-border bg-card text-left p-4 text-sm">
-          <div class="font-semibold mb-1">X sign-in did not complete</div>
+          <div class="font-semibold mb-1" data-i18n="oauth.title">X sign-in did not complete</div>
           <div class="text-muted-foreground mb-3" x-text="oauthError"></div>
           <div class="text-xs text-muted-foreground space-y-1">
-            <p><strong>Most common fix for "To use this App you have to be logged in to X.":</strong></p>
+            <p><strong data-i18n="oauth.commonFix">Most common fix for "To use this App you have to be logged in to X.":</strong></p>
             <ul class="list-disc pl-4 space-y-0.5">
-              <li>Use the <strong>exact same X account</strong> to log in that you used to create the App/Project at developer.x.com.</li>
-              <li>In the portal: Project → your App → User authentication settings → make sure OAuth 1.0a is enabled (and OAuth 2.0 if you still use the legacy path).</li>
-              <li>Add/register <span class="font-mono text-foreground">exactly</span> this Callback URI (copy it):</li>
+              <li data-i18n-html="oauth.fix1html">Use the <strong>exact same X account</strong> to log in that you used to create the App/Project at developer.x.com.</li>
+              <li data-i18n="oauth.fix2">In the portal: Project → your App → User authentication settings → make sure OAuth 1.0a is enabled (and OAuth 2.0 if you still use the legacy path).</li>
+              <li data-i18n-html="oauth.fix3html">Add/register <span class="font-mono text-foreground">exactly</span> this Callback URI (copy it):</li>
             </ul>
             <p class="font-mono bg-black/40 px-2 py-1 rounded break-all" x-text="requiredCallback"></p>
-            <p>Then set the same value in <span class="font-mono">.env</span> as <span class="font-mono">X_REDIRECT_URI</span> and restart the server.</p>
-            <p class="pt-1">Also ensure the Project/App has the Ads API enabled. For local use <span class="font-mono">127.0.0.1</span> (not <span class="font-mono">localhost</span>).</p>
+            <p data-i18n-html="oauth.fix4html">Then set the same value in <span class="font-mono">.env</span> as <span class="font-mono">X_REDIRECT_URI</span> and restart the server.</p>
+            <p class="pt-1" data-i18n-html="oauth.fix5html">Also ensure the Project/App has the Ads API enabled. For local use <span class="font-mono">127.0.0.1</span> (not <span class="font-mono">localhost</span>).</p>
           </div>
 
           <template x-if="oauthError && oauthError.includes('profile_fetch')">
             <div class="mt-3 pt-3 border-t border-red-500/30 text-[11px] text-red-300">
-              <strong>Profile fetch failed after OAuth1 login.</strong><br>
-              The signed request to fetch your profile (using your Consumer Keys + the token from X) was rejected with "Bad Authentication data".<br>
-              Double-check:
+              <strong data-i18n="oauth.profileTitle">Profile fetch failed after OAuth1 login.</strong><br>
+              <span data-i18n="oauth.profileBody">The signed request to fetch your profile (using your Consumer Keys + the token from X) was rejected with "Bad Authentication data".</span><br>
+              <span data-i18n="oauth.profileCheck">Double-check:</span>
               <ul class="list-disc pl-4 mt-1 space-y-0.5">
-                <li>OAuth 1.0a is <strong>enabled</strong> for the App (separate from OAuth 2.0).</li>
-                <li>The exact <span class="font-mono">Callback URL</span> is registered in the <strong>OAuth 1.0a</strong> settings section.</li>
-                <li>You copied the <strong>Consumer Keys</strong> (API Key + Secret), not the OAuth 2.0 Client ID/Secret.</li>
-                <li>App permissions are set to "Read and write".</li>
-                <li>After any change in developer.x.com, wait 30s, fully restart the server (stop uvicorn and run it again), hard-refresh the page, and try signing in once more.</li>
+                <li data-i18n-html="oauth.profile1html">OAuth 1.0a is <strong>enabled</strong> for the App (separate from OAuth 2.0).</li>
+                <li data-i18n-html="oauth.profile2html">The exact <span class="font-mono">Callback URL</span> is registered in the <strong>OAuth 1.0a</strong> settings section.</li>
+                <li data-i18n-html="oauth.profile3html">You copied the <strong>Consumer Keys</strong> (API Key + Secret), not the OAuth 2.0 Client ID/Secret.</li>
+                <li data-i18n="oauth.profile4">App permissions are set to "Read and write".</li>
+                <li data-i18n="oauth.profile5">After any change in developer.x.com, wait 30s, fully restart the server (stop uvicorn and run it again), hard-refresh the page, and try signing in once more.</li>
               </ul>
             </div>
           </template>
@@ -96,25 +109,25 @@
 
       <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium mb-4">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        X Only
+        <span data-i18n="hero.badge">X Only</span>
       </div>
-      <h1 class="text-4xl font-bold tracking-tighter mb-3">Dynamic Media Card Tool</h1>
-      <p class="text-muted-foreground mb-6">Update X website cards and app cards on a schedule.<br>Click below to sign in — this tool supports <span class="font-medium">X sign-in only</span>.</p>
+      <h1 class="text-4xl font-bold tracking-tighter mb-3" data-i18n="hero.title">Dynamic Media Card Tool</h1>
+      <p class="text-muted-foreground mb-6" data-i18n-html="hero.subtitle">Update X website cards and app cards on a schedule.<br>Click below to sign in — this tool supports <span class="font-medium">X sign-in only</span>.</p>
 
       <!-- Pre-flight warning (neutral style) -->
       <div class="mb-4 mx-auto max-w-md rounded-xl border border-border bg-card p-3 text-xs text-left">
-        <div class="font-semibold mb-1">Before you click “Sign in with X”:</div>
-        <div class="text-muted-foreground">
+        <div class="font-semibold mb-1" data-i18n="hero.preflightTitle">Before you click “Sign in with X”:</div>
+        <div class="text-muted-foreground" data-i18n="hero.preflightBody">
           Open x.com in this same browser and log in (or switch accounts) to the exact X account that owns the post that you would like to change the media
         </div>
       </div>
 
       <a href="/login" class="btn-primary inline-flex items-center gap-3 px-8 py-3 text-base">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-        Sign in with X
+        <span data-i18n="hero.signIn">Sign in with X</span>
       </a>
 
-      <p class="mt-3 text-xs text-muted-foreground">Requires an X account that has access to X Ads.</p>
+      <p class="mt-3 text-xs text-muted-foreground" data-i18n="hero.requires">Requires an X account that has access to X Ads.</p>
     </div>
 
     <!-- Main app (the logged-in experience) -->
@@ -142,7 +155,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
           </div>
-          <p class="text-sm font-semibold">X Ads Account</p>
+          <p class="text-sm font-semibold" data-i18n="ads.title">X Ads Account</p>
           <!-- The Active/Required badge is rendered/managed imperatively by __syncAdsBadgeAndPillsUI
                (single owner). We intentionally do NOT use Alpine x-if here: having both an x-if badge
                and the imperative sync caused two "Active" labels to appear. -->
@@ -150,10 +163,10 @@
 
         <div>
           <label class="text-xs text-muted-foreground mb-1.5 block">
-            Account ID
-            <span class="ml-1 opacity-60">— find it at
+            <span data-i18n="ads.accountId">Account ID</span>
+            <span class="ml-1 opacity-60"><span data-i18n="ads.findAt">— find it at</span>
               <a href="https://ads.x.com" target="_blank" rel="noreferrer" class="underline">ads.x.com</a>
-              → Account settings
+              <span data-i18n="ads.findAtTail">→ Account settings</span>
             </span>
           </label>
           <input
@@ -162,7 +175,7 @@
             x-model="manualAdsAccountId"
             @input="onAdsAccountInput"
             value="{{ preferred_ads_account_id or '' }}"
-            :placeholder="adsLoading ? 'Detecting…' : (autoAccount ? autoAccount.id : 'e.g. abc123def')"
+            :placeholder="adsLoading ? window.t('ads.detecting', 'Detecting…') : (autoAccount ? autoAccount.id : window.t('ads.placeholder', 'e.g. abc123def'))"
             class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary transition-colors bg-transparent"
           />
         </div>
@@ -178,8 +191,8 @@
         <template x-if="user || !adsLoading || (displayAdsAccounts && displayAdsAccounts.length > 0)">
           <div>
             <p class="text-xs text-muted-foreground mb-1.5" data-ads-pills-head>
-              Detected accounts <span style="opacity:0.6">(<span id="ads-detected-count"></span>)</span>
-              <button type="button" @click="loadAdsAccounts(true)" style="margin-left:6px; font-size:9px; padding:1px 4px; border:1px solid #333; border-radius:3px; background:transparent; color:#888; cursor:pointer;">reload</button>
+              <span data-i18n="ads.detected">Detected accounts</span> <span style="opacity:0.6">(<span id="ads-detected-count"></span>)</span>
+              <button type="button" @click="loadAdsAccounts(true)" data-i18n="ads.reload" style="margin-left:6px; font-size:9px; padding:1px 4px; border:1px solid #333; border-radius:3px; background:transparent; color:#888; cursor:pointer;">reload</button>
             </p>
             <template x-if="displayAdsAccounts.length > 0">
               <div class="flex flex-wrap gap-2">
@@ -199,20 +212,20 @@
               </div>
             </template>
             <template x-if="displayAdsAccounts.length === 0 && !adsError && !displayManualAdsAccountId">
-              <p class="text-xs text-muted-foreground">
+              <p class="text-xs text-muted-foreground" data-i18n-html="ads.noneDetectedHtml">
                 No accounts detected for this X user from the Ads API or your previous schedules.
                 You can still paste the Ads Account ID manually above. Find it at
                 <a href="https://ads.x.com" target="_blank" class="underline">ads.x.com</a> → Account settings.
               </p>
             </template>
             <template x-if="displayAdsAccounts.length === 0 && adsError">
-              <p class="text-xs text-muted-foreground">See error below. You can still paste the Ads Account ID manually.</p>
+              <p class="text-xs text-muted-foreground" data-i18n="ads.seeError">See error below. You can still paste the Ads Account ID manually.</p>
             </template>
           </div>
         </template>
 
         <template x-if="adsError">
-          <p class="text-xs text-red-400">Could not load accounts: <span x-text="adsError"></span>. You can still paste the ID manually.</p>
+          <p class="text-xs text-red-400"><span data-i18n="ads.loadFailed">Could not load accounts:</span> <span x-text="adsError"></span><span data-i18n="ads.loadFailedTail">. You can still paste the ID manually.</span></p>
         </template>
 
       </div>
@@ -223,23 +236,23 @@
           <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
           </svg>
-          Enter post link with website or app card
+          <span data-i18n="post.title">Enter post link with website or app card</span>
         </h2>
 
         <!-- Always-visible server-side signed-in indicator + logout (works even if Alpine user data is empty) -->
         <div style="margin-bottom:8px; font-size:12px; color:#a1a1aa;">
           {% if user %}
-          Signed in via X as <strong style="color:#fafafa;">@{{ user.username }}</strong>
-          <a href="/logout" style="margin-left:8px; color:#1d9bf0; font-size:11px; text-decoration:underline;">Sign out &amp; start over</a>
+          <span data-i18n="post.signedInVia">Signed in via X as</span> <strong style="color:#fafafa;">@{{ user.username }}</strong>
+          <a href="/logout" data-i18n="post.signOutRestart" style="margin-left:8px; color:#1d9bf0; font-size:11px; text-decoration:underline;">Sign out &amp; start over</a>
           {% else %}
-          <span style="color:#facc15;">(no server user in this render)</span>
+          <span style="color:#facc15;" data-i18n="post.noServerUser">(no server user in this render)</span>
           {% endif %}
         </div>
 
         <div>
           <div class="space-y-3">
             <div>
-              <label class="text-xs text-muted-foreground mb-1.5 block">X Post URL</label>
+              <label class="text-xs text-muted-foreground mb-1.5 block" data-i18n="post.urlLabel">X Post URL</label>
               <input
                 id="post-url-input"
                 type="url"
@@ -247,7 +260,7 @@
                 class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
                 onkeydown="if (event.key === 'Enter') { event.preventDefault(); if (window.doValidatePost) window.doValidatePost(); }"
               />
-              <p class="mt-1 text-[10px] text-muted-foreground">Paste a link to a post that uses a website card or app card, then click the button or press Enter.</p>
+              <p class="mt-1 text-[10px] text-muted-foreground" data-i18n="post.urlHelp">Paste a link to a post that uses a website card or app card, then click the button or press Enter.</p>
             </div>
 
             <div class="pt-1">
@@ -256,14 +269,14 @@
                 onclick="if (window.doValidatePost) window.doValidatePost(); else console.warn('doValidatePost not ready yet');"
                 style="border-radius:9999px; padding:10px 28px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:8px; background:#1d9bf0; color:#fff; min-width:240px; justify-content:center; border:none; cursor:pointer;"
               >
-                Validate Post &amp; Load Card
+                <span data-i18n="post.validate">Validate Post &amp; Load Card</span>
                 <span id="validate-spinner" style="display:none; align-items:center; gap:6px; margin-left:4px;">
                   <span class="spinner" style="width:14px;height:14px;border:1.5px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite;"></span>
                 </span>
               </button>
 
               <template x-if="!effectiveAdsAccountId">
-                <div style="margin-top:6px;font-size:10px;color:#facc15;">Set X Ads Account ID above first.</div>
+                <div style="margin-top:6px;font-size:10px;color:#facc15;" data-i18n="post.setAdsFirst">Set X Ads Account ID above first.</div>
               </template>
             </div>
 
@@ -280,43 +293,43 @@
             <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
-            Current Card (uneditable)
+            <span data-i18n="card.title">Current Card (uneditable)</span>
           </h2>
           <span id="cc-type" class="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground">CARD</span>
         </div>
 
-        <div class="text-[10px] text-muted-foreground mb-1">Card ID (from post):</div>
+        <div class="text-[10px] text-muted-foreground mb-1" data-i18n="card.idLabel">Card ID (from post):</div>
         <div id="cc-id" class="font-mono text-xs break-all bg-background border border-border rounded px-2 py-1 mb-3">—</div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
           <div id="cc-title-wrap" class="rounded-xl border border-border bg-background p-3">
-            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Title</div>
+            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1" data-i18n="card.fieldTitle">Title</div>
             <div id="cc-title" class="font-medium break-words">—</div>
           </div>
           <div class="rounded-xl border border-border bg-background p-3">
-            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Media Key</div>
+            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1" data-i18n="card.fieldMediaKey">Media Key</div>
             <div id="cc-media" class="font-mono text-xs break-all">—</div>
             <div id="cc-dim" class="text-[10px] text-muted-foreground mt-0.5" style="display:none"></div>
             <div class="text-[10px] mt-0.5" style="display:none">
-              <span class="text-muted-foreground">Type:</span>
+              <span class="text-muted-foreground" data-i18n="card.fieldType">Type:</span>
               <span id="cc-mtype" class="font-medium"></span>
             </div>
           </div>
           <div id="cc-url-wrap" class="md:col-span-2 rounded-xl border border-border bg-background p-3">
-            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Destination URL</div>
+            <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1" data-i18n="card.fieldUrl">Destination URL</div>
             <div id="cc-url" class="font-mono text-xs break-all text-primary">—</div>
           </div>
         </div>
 
         <!-- Small preview image (from media_metadata url in the Ads card response) -->
         <div id="cc-preview-wrap" style="display:none">
-          <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Media Preview</div>
+          <div class="text-[10px] uppercase tracking-widest text-muted-foreground mb-1" data-i18n="card.mediaPreview">Media Preview</div>
           <img id="cc-preview-img" style="max-width:100%; max-height:160px; border-radius:8px; border:1px solid #333; background:#111;" alt="media preview"/>
         </div>
 
         <div id="cc-note" class="text-[11px] text-amber-400" style="display:none"></div>
 
-        <div class="text-[11px] text-muted-foreground">
+        <div class="text-[11px] text-muted-foreground" data-i18n="card.readNote">
           These values are read from the live card (or the post when Ads details are not available). You can schedule new values below.
         </div>
       </div>
@@ -327,7 +340,7 @@
             <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z"/>
             </svg>
-            Schedule Update
+            <span data-i18n="form.title">Schedule Update</span>
           </h2>
 
           <!-- Create-mode tabs: One-time (existing single schedule) vs Multiple updates (series) -->
@@ -336,18 +349,18 @@
               <button type="button" id="tab-onetime-btn"
                       onclick="window.switchScheduleTab && window.switchScheduleTab('onetime')"
                       class="px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-primary-foreground shadow-sm transition-colors">
-                One-time update
+                <span data-i18n="form.tabOnetime">One-time update</span>
               </button>
               <button type="button" id="tab-series-btn"
                       onclick="window.switchScheduleTab && window.switchScheduleTab('series')"
                       class="px-4 py-2 text-sm font-medium rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-                Multiple updates
+                <span data-i18n="form.tabSeries">Multiple updates</span>
               </button>
             </div>
             <p class="text-xs text-muted-foreground leading-relaxed">
-              <span class="font-medium text-foreground">One-time update</span> — a single scheduled update.
+              <span class="font-medium text-foreground" data-i18n="form.tabCaptionOnetimeName">One-time update</span><span data-i18n="form.tabCaptionOnetimeDesc"> — a single scheduled update.</span>
               <br>
-              <span class="font-medium text-foreground">Multiple updates</span> — several scheduled updates for the same card, run in order as a series.
+              <span class="font-medium text-foreground" data-i18n="form.tabCaptionSeriesName">Multiple updates</span><span data-i18n="form.tabCaptionSeriesDesc"> — several scheduled updates for the same card, run in order as a series.</span>
             </p>
           </div>
 
@@ -355,7 +368,7 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- New Title -->
             <div id="new-title-wrap">
-              <label class="text-xs text-muted-foreground mb-1.5 block">New Title</label>
+              <label class="text-xs text-muted-foreground mb-1.5 block" data-i18n="form.newTitle">New Title</label>
               <input
                 id="new-title-input"
                 type="text"
@@ -368,7 +381,7 @@
 
             <!-- New Media Key -->
             <div>
-              <label class="text-xs text-muted-foreground mb-1.5 block">New Media Key</label>
+              <label class="text-xs text-muted-foreground mb-1.5 block" data-i18n="form.newMediaKey">New Media Key</label>
               <div class="flex items-center gap-2">
                 <input
                   id="new-media-input"
@@ -376,17 +389,19 @@
                   x-model="newMediaId"
                   @input="clearMediaValidation()"
                   placeholder="e.g. 3_1234567890123456789"
+                  data-i18n-placeholder="form.mediaPlaceholder"
                   class="flex-1 px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary"
                   :class="mediaDimError ? 'border-red-500/70' : ''"
                 />
                 <button id="select-media-btn" type="button"
                         onclick="window.__mediaPickerTarget = null; if (window.openMediaPicker) { window.openMediaPicker(); } else { console.warn('[MEDIA-PICKER] openMediaPicker not ready yet'); }"
                         class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted active:bg-muted/70 text-foreground whitespace-nowrap"
-                        title="Browse your media library or upload a new file">
-                  Select new media
+                        title="Browse your media library or upload a new file"
+                        data-i18n-title="form.selectMediaTitle">
+                  <span data-i18n="form.selectMedia">Select new media</span>
                 </button>
               </div>
-              <div class="mt-1 text-[10px] text-muted-foreground">
+              <div class="mt-1 text-[10px] text-muted-foreground" data-i18n="form.mediaHelp">
                 Click "Select new media" to browse your library (filtered to the original media type) or upload a file. Type, aspect ratio and preview load automatically.
               </div>
               <!-- Status / result area for Check (vanilla-driven). On success this shows the Type + Aspect + Preview. -->
@@ -405,7 +420,7 @@
 
             <!-- New URL -->
             <div id="new-url-wrap" class="md:col-span-2">
-              <label class="text-xs text-muted-foreground mb-1.5 block">New Destination URL</label>
+              <label class="text-xs text-muted-foreground mb-1.5 block" data-i18n="form.newUrl">New Destination URL</label>
               <input
                 id="new-url-input"
                 type="url"
@@ -427,10 +442,10 @@
 
           <!-- Schedule Time -->
           <div>
-            <label class="text-xs text-muted-foreground mb-1.5 block">Scheduled time (must be in the future)</label>
+            <label class="text-xs text-muted-foreground mb-1.5 block" data-i18n="form.scheduledTime">Scheduled time (must be in the future)</label>
             <div class="flex flex-wrap items-end gap-2">
               <div>
-                <div class="text-[10px] text-muted-foreground mb-0.5">Date</div>
+                <div class="text-[10px] text-muted-foreground mb-0.5" data-i18n="form.date">Date</div>
                 <input
                   id="schedule-date-input"
                   type="date"
@@ -438,7 +453,7 @@
                 />
               </div>
               <div>
-                <div class="text-[10px] text-muted-foreground mb-0.5">Time (24-hour)</div>
+                <div class="text-[10px] text-muted-foreground mb-0.5" data-i18n="form.time24">Time (24-hour)</div>
                 <input
                   id="schedule-time-part"
                   type="text"
@@ -453,12 +468,12 @@
               <input type="hidden" id="schedule-time-input" />
             </div>
 
-            <div x-show="isScheduleTimeInPast()" class="mt-1 text-xs text-red-400">
+            <div x-show="isScheduleTimeInPast()" class="mt-1 text-xs text-red-400" data-i18n="form.pastWarning">
               Scheduled time must be in the future.
             </div>
 
             <div class="mt-2">
-              <label class="text-xs text-muted-foreground mb-1 block">Timezone</label>
+              <label class="text-xs text-muted-foreground mb-1 block" data-i18n="form.timezone">Timezone</label>
               <select
                 x-model="chosenUtcOffset"
                 @change="markTzManual()"
@@ -476,12 +491,12 @@
               :disabled="saving || isScheduleTimeInPast()"
               class="btn-primary px-6 py-2.5 disabled:opacity-50 flex items-center gap-2"
             >
-              <span>Save Schedule</span>
+              <span data-i18n="form.save">Save Schedule</span>
               <span x-show="saving" class="spinner w-4 h-4 border-[1.5px]"></span>
-              <span x-show="saving">Saving…</span>
+              <span x-show="saving" data-i18n="form.saving">Saving…</span>
             </button>
             <div class="mt-1.5">
-              <span class="text-xs text-muted-foreground">The update will be applied at the scheduled time.</span>
+              <span class="text-xs text-muted-foreground" data-i18n="form.saveNote">The update will be applied at the scheduled time.</span>
               <div id="save-sched-status" style="margin-top:2px; font-size:11px; min-height:1em;"></div>
             </div>
           </div>
@@ -491,13 +506,14 @@
           <div id="series-pane" style="display:none" class="space-y-4">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label class="text-xs text-muted-foreground mb-1.5 block">Series name (label)</label>
+                <label class="text-xs text-muted-foreground mb-1.5 block" data-i18n="series.label">Series name (label)</label>
                 <input id="series-label-input" type="text" maxlength="80"
                        placeholder="e.g. Countdown 1"
+                       data-i18n-placeholder="series.labelPlaceholder"
                        class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary" />
               </div>
               <div>
-                <label class="text-xs text-muted-foreground mb-1.5 block">Timezone (shared by all steps)</label>
+                <label class="text-xs text-muted-foreground mb-1.5 block" data-i18n="series.timezone">Timezone (shared by all steps)</label>
                 <select id="series-tz-select"
                         class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary"></select>
               </div>
@@ -506,7 +522,7 @@
             <label class="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
               <input id="series-stop-on-failure" type="checkbox"
                      class="rounded border-border bg-muted/50 text-primary focus:ring-primary" />
-              <span>Stop remaining updates if one fails (otherwise the remaining steps still run)</span>
+              <span data-i18n="series.stopOnFailure">Stop remaining updates if one fails (otherwise the remaining steps still run)</span>
             </label>
 
             <div id="series-steps" class="space-y-3"></div>
@@ -514,7 +530,7 @@
             <div>
               <button type="button" id="series-add-step-btn"
                       class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground">
-                + Add step
+                <span data-i18n="series.addStep">+ Add step</span>
               </button>
             </div>
 
@@ -523,10 +539,10 @@
             <div>
               <button type="button" id="series-save-btn"
                       class="btn-primary px-6 py-2.5 disabled:opacity-50 flex items-center gap-2">
-                <span>Create series</span>
+                <span data-i18n="series.create">Create series</span>
               </button>
               <div class="mt-1.5">
-                <span class="text-xs text-muted-foreground">All updates apply to the same card at their own scheduled times.</span>
+                <span class="text-xs text-muted-foreground" data-i18n="series.createNote">All updates apply to the same card at their own scheduled times.</span>
                 <div id="series-save-status" style="margin-top:2px; font-size:11px; min-height:1em;"></div>
               </div>
             </div>
@@ -538,10 +554,10 @@
            It only appears after login. -->
       <div id="schedules" class="pt-2">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="section-title">Your Scheduled Updates</h2>
+          <h2 class="section-title" data-i18n="list.title">Your Scheduled Updates</h2>
           <button id="schedules-refresh-btn" onclick="window.__schedulesUserAction = true; if (window.__hardRefreshSchedulesList) window.__hardRefreshSchedulesList(); else if (window.refreshSchedulesList) window.refreshSchedulesList(true);" class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.058 11H1M12 3v2m0 16v2m9-9H15m-6 0a8 8 0 01-.938-1.5"/></svg>
-            Refresh
+            <span data-i18n="list.refresh">Refresh</span>
           </button>
         </div>
 
@@ -555,12 +571,12 @@
         -->
         <div class="bg-card rounded-2xl border border-border overflow-hidden" id="schedules-list-body">
           <div id="schedules-list-content">
-            <div class="p-8 text-center text-sm text-muted-foreground">
+            <div class="p-8 text-center text-sm text-muted-foreground" data-i18n="list.empty">
               No schedules yet. Load a card above and create your first scheduled update.
             </div>
           </div>
         </div>
-        <p class="text-[10px] text-muted-foreground mt-2">Scheduled updates run server-side at their exact time (APScheduler). “Run now” is for testing only.</p>
+        <p class="text-[10px] text-muted-foreground mt-2" data-i18n="list.footnote">Scheduled updates run server-side at their exact time (APScheduler). “Run now” is for testing only.</p>
       </div>
 
       <!-- Toasts are rendered by the global toast region at end of body (fed by showToast + direct dispatches) -->
@@ -788,12 +804,12 @@
     }
 
     if (!mediaKey) {
-      setStatus('Enter a media key first.', true);
+      setStatus(window.t('msg.enterMediaKey', 'Enter a media key first.'), true);
       if (alpineData) alpineData.mediaDimLoading = false;
       return;
     }
     if (!adsId) {
-      setStatus('Ads Account ID is required to look up the media.', true);
+      setStatus(window.t('msg.adsRequiredMedia', 'Ads Account ID is required to look up the media.'), true);
       if (btn) btn.disabled = false;
       if (alpineData) alpineData.mediaDimLoading = false;
       return;
@@ -956,11 +972,11 @@
     }
 
     if (!card || !card.id) {
-      setStatus('No card loaded. Validate a post first.', true);
+      setStatus(window.t('msg.noCardLoaded', 'No card loaded. Validate a post first.'), true);
       return;
     }
     if (!adsId) {
-      setStatus('Ads Account ID required.', true);
+      setStatus(window.t('msg.adsRequiredShort', 'Ads Account ID required.'), true);
       return;
     }
 
@@ -987,14 +1003,14 @@
         // epoch log removed
 
     if (!scheduledEpoch || scheduledEpoch <= nowSec) {
-      setStatus('Scheduled time must be in the future.', true);
+      setStatus(window.t('msg.timeMustBeFuture', 'Scheduled time must be in the future.'), true);
       return;
     }
 
     // New Media Key check is informational only. We only require a non-empty value here.
     var enteredNewMid = (document.getElementById('new-media-input') || {}).value || '';
     if (!(enteredNewMid || '').trim()) {
-      setStatus('New Media Key is required.', true);
+      setStatus(window.t('msg.mediaKeyRequired', 'New Media Key is required.'), true);
       return;
     }
 
@@ -1033,9 +1049,9 @@
           return;
         }
           // Success message under the Save button (same place as errors), plus the toast.
-          setStatus('Schedule saved.', false);
+          setStatus(window.t('msg.scheduleSaved', 'Schedule saved.'), false);
           try {
-            window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Schedule saved. It will run at the chosen time.' } }));
+            window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.scheduleSavedRun', 'Schedule saved. It will run at the chosen time.') } }));
           } catch (e) {}
           window.__schedulesUserAction = true;
           try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch (e) {}
@@ -1221,13 +1237,13 @@
 
     if (!accountId) {
       clearTransient();
-      if (errBox) { errBox.style.display = 'block'; errBox.textContent = 'Please enter or select an Ads Account ID first.'; }
+      if (errBox) { errBox.style.display = 'block'; errBox.textContent = window.t('msg.adsRequired', 'Please enter or select an Ads Account ID first.'); }
       if (spinner) spinner.style.display = 'none';
       return;
     }
     if (!pUrl) {
       clearTransient();
-      if (errBox) { errBox.style.display = 'block'; errBox.textContent = 'Please paste an X post URL.'; }
+      if (errBox) { errBox.style.display = 'block'; errBox.textContent = window.t('msg.pasteUrl', 'Please paste an X post URL.'); }
       if (spinner) spinner.style.display = 'none';
       return;
     }
@@ -2526,12 +2542,12 @@
         if (!pUrl) pUrl = (this.postUrl || '').trim();
 
         if (!accountId) {
-          this.postError = 'Please enter or select an Ads Account ID first.';
+          this.postError = window.t('msg.adsRequired', 'Please enter or select an Ads Account ID first.');
           this.showToast(this.postError, true);
           return;
         }
         if (!pUrl) {
-          this.postError = 'Please paste an X post URL.';
+          this.postError = window.t('msg.pasteUrl', 'Please paste an X post URL.');
           this.showToast(this.postError, true);
           return;
         }
@@ -2836,7 +2852,7 @@
         // epoch log removed
 
         if (!scheduledEpoch || scheduledEpoch <= nowSec) {
-          this.showToast('Scheduled time must be in the future.', true);
+          this.showToast(window.t('msg.timeMustBeFuture', 'Scheduled time must be in the future.'), true);
           return;
         }
 
@@ -2880,12 +2896,12 @@
             return;
           }
           try { var sts2 = document.getElementById('save-sched-status'); if (sts2) { sts2.textContent = ''; sts2.style.color = ''; } } catch(e){}
-          this.showToast('Schedule saved. It will run at the chosen time.');
+          this.showToast(window.t('msg.scheduleSavedRun', 'Schedule saved. It will run at the chosen time.'));
           // Show success in the same spot as errors (under the Save button).
           try {
             var stsOk = document.getElementById('save-sched-status');
             if (stsOk) {
-              stsOk.textContent = 'Schedule saved.';
+              stsOk.textContent = window.t('msg.scheduleSaved', 'Schedule saved.');
               stsOk.style.color = '#4ade80';
               setTimeout(function(){
                 try { if (stsOk && /saved/i.test(stsOk.textContent||'')) { stsOk.textContent = ''; stsOk.style.color = ''; } } catch(e){}
@@ -3434,12 +3450,12 @@
     var dismissBtn = root.querySelector('[data-confirm-dismiss]');
     var overlay = root.querySelector('[data-confirm-overlay]');
 
-    titleEl.textContent = opts.title || 'Are you sure?';
+    titleEl.textContent = opts.title || window.t('confirm.defaultTitle', 'Are you sure?');
     msgEl.textContent = opts.message || '';
     msgEl.style.display = opts.message ? '' : 'none';
-    acceptBtn.textContent = opts.confirmLabel || 'Confirm';
+    acceptBtn.textContent = opts.confirmLabel || window.t('confirm.defaultAccept', 'Confirm');
     acceptBtn.className = (opts.confirmStyle === 'primary' ? 'btn-primary' : 'btn-danger') + ' text-xs';
-    dismissBtn.textContent = opts.dismissLabel || 'Go back';
+    dismissBtn.textContent = opts.dismissLabel || window.t('confirm.defaultDismiss', 'Go back');
 
     return new Promise(function (resolve) {
       var done = false;
@@ -3471,9 +3487,13 @@
     var body = document.getElementById('schedules-list-content') || document.getElementById('schedules-list-body');
     if (!body) return;
     var sl = document.getElementById('schedules'); if (sl) sl.style.display = '';
+    // Remember the last rendered data so a language switch can relabel the list
+    // by re-rendering from cache (no refetch, no state change).
+    try { window.__lastRenderedSchedules = list; } catch (e) {}
 
     if (!list || list.length === 0) {
-      body.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">No schedules yet. Load a card above and create your first scheduled update.</div>';
+      body.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">' +
+        escHtml(window.t('list.empty', 'No schedules yet. Load a card above and create your first scheduled update.')) + '</div>';
       return;
     }
     // Sanitize any legacy JSON results for completed (defensive, in case list came from memory)
@@ -3482,7 +3502,9 @@
         var rs = String(s.result || '').trim();
         if (rs[0] === '{' || rs[0] === '[') {
           var p = s.original_post_url || s.new_url || '';
-          s = Object.assign({}, s, { result: p ? ('Card updated. Post: ' + p) : 'Card updated.' });
+          s = Object.assign({}, s, { result: p
+            ? (window.t('list.cardUpdatedPost', 'Card updated. Post: ') + p)
+            : window.t('list.cardUpdated', 'Card updated.') });
         }
       }
       // Ensure changes array exists for the "Will change / Changed" block
@@ -3501,6 +3523,17 @@
       return sc;
     }
 
+    // Localized badge text. The raw status value is unchanged - this is display only.
+    function statusLabel(status){
+      var k = String(status || '').toLowerCase();
+      if (k === 'pending')   return window.t('status.pending', 'pending');
+      if (k === 'running')   return window.t('status.running', 'running');
+      if (k === 'completed') return window.t('status.completed', 'completed');
+      if (k === 'failed')    return window.t('status.failed', 'failed');
+      if (k === 'cancelled') return window.t('status.cancelled', 'cancelled');
+      return status || '';
+    }
+
     // Renders one schedule row. opts.compact => hide account/card header (used for series steps,
     // where the account/card is already shown on the series header) and show a "Step N" tag instead.
     function rowHtml(s, opts){
@@ -3517,24 +3550,24 @@
       var header;
       if (opts.compact) {
         header = '<div class="flex items-center gap-2">' +
-            '<span class="text-[10px] px-1.5 py-0.5 bg-muted rounded">Step ' + escHtml(String(s.step || opts.stepIndex || '')) + '</span>' +
-            '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + (s.status || '') + '</span>' +
+            '<span class="text-[10px] px-1.5 py-0.5 bg-muted rounded">' + escHtml(window.tf('list.step', 'Step {n}', { n: String(s.step || opts.stepIndex || '') })) + '</span>' +
+            '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + escHtml(statusLabel(s.status)) + '</span>' +
           '</div>';
       } else {
         header = '<div class="flex items-center gap-2">' +
             '<span class="font-mono text-xs px-1.5 py-0.5 bg-muted rounded">' + escHtml(s.ads_account_id || '') + '</span>' +
-            '<span class="font-mono text-xs text-muted-foreground">card:</span>' +
+            '<span class="font-mono text-xs text-muted-foreground">' + escHtml(window.t('list.card', 'card:')) + '</span>' +
             '<span class="font-mono text-xs">' + escHtml(s.card_id || '') + '</span>' +
-            '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + (s.status || '') + '</span>' +
-            (opts.oneTimeTag ? '<span class="text-[10px] px-1.5 py-px rounded bg-muted text-muted-foreground">One-time</span>' : '') +
+            '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + escHtml(statusLabel(s.status)) + '</span>' +
+            (opts.oneTimeTag ? '<span class="text-[10px] px-1.5 py-px rounded bg-muted text-muted-foreground">' + escHtml(window.t('list.tagOneTime', 'One-time')) + '</span>' : '') +
           '</div>';
       }
       return '<div class="p-4 flex flex-col md:flex-row md:items-start gap-3">' +
         '<div class="flex-1 space-y-1">' +
           header +
-          (!opts.compact && s.original_post_url ? '<div class="text-xs text-muted-foreground"><span>Post: </span><a href="' + escHtml(s.original_post_url) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(s.original_post_url) + '</a></div>' : '') +
-          '<div class="text-xs text-muted-foreground"><span>Scheduled (local time): </span><span class="text-foreground">' + when + '</span></div>' +
-          (s.executed_at ? '<div class="text-xs text-muted-foreground"><span>Executed: </span><span class="text-foreground">' + new Date(s.executed_at * 1000).toLocaleString() + '</span></div>' : '') +
+          (!opts.compact && s.original_post_url ? '<div class="text-xs text-muted-foreground"><span>' + escHtml(window.t('list.post', 'Post: ')) + '</span><a href="' + escHtml(s.original_post_url) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(s.original_post_url) + '</a></div>' : '') +
+          '<div class="text-xs text-muted-foreground"><span>' + escHtml(window.t('list.scheduled', 'Scheduled (local time): ')) + '</span><span class="text-foreground">' + when + '</span></div>' +
+          (s.executed_at ? '<div class="text-xs text-muted-foreground"><span>' + escHtml(window.t('list.executed', 'Executed: ')) + '</span><span class="text-foreground">' + new Date(s.executed_at * 1000).toLocaleString() + '</span></div>' : '') +
           (function(){
             // Series rows recompute against the previous-step baseline (ignore any original-based
             // cached changes); one-time rows reuse the cached original-based changes.
@@ -3542,22 +3575,24 @@
               ? (window.buildScheduleChanges ? window.buildScheduleChanges(s, base) : [])
               : ((s.changes && s.changes.length) ? s.changes : (window.buildScheduleChanges ? window.buildScheduleChanges(s) : []));
             if (ch && ch.length) {
-              var label = (s.status === 'pending') ? 'Will change:' : 'Changed:';
+              var label = (s.status === 'pending')
+                ? window.t('list.willChange', 'Will change:')
+                : window.t('list.changed', 'Changed:');
               return '<div class="text-[10px] pt-0.5"><span class="text-muted-foreground">' + label + '</span> <span class="text-foreground">' + ch.join('  •  ') + '</span></div>';
             }
             return '';
           })() +
           '<div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-0.5 pt-1 text-xs">' +
-            '<div><span class="text-muted-foreground">Title:</span> ' + escHtml(s.new_title || '') + '</div>' +
+            '<div><span class="text-muted-foreground">' + escHtml(window.t('list.fTitle', 'Title:')) + '</span> ' + escHtml(s.new_title || '') + '</div>' +
             (function(){
               var om = base.media_id || '';
               var nm = s.new_media_id || '';
               if (om && nm && om !== nm) {
-                return '<div><span class="text-muted-foreground">Media key:</span> <span class="font-mono break-all">' + escHtml(om) + ' → ' + escHtml(nm) + '</span></div>';
+                return '<div><span class="text-muted-foreground">' + escHtml(window.t('list.fMediaKey', 'Media key:')) + '</span> <span class="font-mono break-all">' + escHtml(om) + ' → ' + escHtml(nm) + '</span></div>';
               }
-              return '<div><span class="text-muted-foreground">Media key:</span> <span class="font-mono break-all">' + escHtml(nm) + '</span></div>';
+              return '<div><span class="text-muted-foreground">' + escHtml(window.t('list.fMediaKey', 'Media key:')) + '</span> <span class="font-mono break-all">' + escHtml(nm) + '</span></div>';
             })() +
-            '<div class="sm:col-span-3"><span class="text-muted-foreground">URL:</span> <span class="font-mono text-primary break-all">' + escHtml(s.new_url || '') + '</span></div>' +
+            '<div class="sm:col-span-3"><span class="text-muted-foreground">' + escHtml(window.t('list.fUrl', 'URL:')) + '</span> <span class="font-mono text-primary break-all">' + escHtml(s.new_url || '') + '</span></div>' +
           '</div>' +
           (function(){
             var op = base.preview || '';
@@ -3565,7 +3600,7 @@
             var om = base.media_id || '';
             var nm = s.new_media_id || '';
             if (om && nm && om !== nm && (op || np)) {
-              var h = '<div class="pt-1 flex items-center gap-2 text-[10px]"><span class="text-muted-foreground shrink-0">Media previews:</span><div class="flex items-center gap-1.5">';
+              var h = '<div class="pt-1 flex items-center gap-2 text-[10px]"><span class="text-muted-foreground shrink-0">' + escHtml(window.t('list.mediaPreviews', 'Media previews:')) + '</span><div class="flex items-center gap-1.5">';
               if (op) h += '<img src="' + escHtml(op) + '" alt="original" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
               h += '<span class="text-muted-foreground">→</span>';
               if (np) h += '<img src="' + escHtml(np) + '" alt="new" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #333;background:#111;" />';
@@ -3584,19 +3619,19 @@
           })() +
         '</div>' +
         '<div class="flex md:flex-col gap-2 shrink-0">' +
-          (s.status === 'pending' ? '<button class="btn-danger text-xs" data-vcancel="' + s.id + '">Cancel</button>' : '') +
-          ((s.status !== 'cancelled' && s.status !== 'running') ? '<button class="btn-outline text-xs" data-vrun="' + s.id + '">Run now</button>' : '') +
+          (s.status === 'pending' ? '<button class="btn-danger text-xs" data-vcancel="' + s.id + '">' + escHtml(window.t('list.cancel', 'Cancel')) + '</button>' : '') +
+          ((s.status !== 'cancelled' && s.status !== 'running') ? '<button class="btn-outline text-xs" data-vrun="' + s.id + '">' + escHtml(window.t('list.runNow', 'Run now')) + '</button>' : '') +
         '</div>' +
       '</div>';
     }
 
     function fmtCountdown(sec){
       var d = sec - Date.now()/1000;
-      if (d <= 0) return 'due now';
+      if (d <= 0) return window.t('cd.dueNow', 'due now');
       var h = Math.floor(d/3600), m = Math.floor((d%3600)/60);
-      if (h >= 24){ var days = Math.floor(h/24); return 'in ' + days + 'd ' + (h%24) + 'h'; }
-      if (h > 0) return 'in ' + h + 'h ' + m + 'm';
-      return 'in ' + m + 'm';
+      if (h >= 24){ var days = Math.floor(h/24); return window.tf('cd.days', 'in {d}d {h}h', { d: days, h: (h%24) }); }
+      if (h > 0) return window.tf('cd.hours', 'in {h}h {m}m', { h: h, m: m });
+      return window.tf('cd.minutes', 'in {m}m', { m: m });
     }
 
     // Renders a collapsible series group (header + progress summary + expandable steps).
@@ -3611,23 +3646,23 @@
       steps.forEach(function(s){ if (counts[s.status] != null) counts[s.status]++; });
       var label = '';
       for (var i=0;i<steps.length;i++){ if (steps[i].series_label){ label = steps[i].series_label; break; } }
-      if (!label) label = 'Untitled series';
+      if (!label) label = window.t('list.untitledSeries', 'Untitled series');
       var hasPending = counts.pending > 0;
       var pendings = steps.filter(function(s){ return s.status === 'pending'; });
       var nextStep = pendings.length ? pendings.reduce(function(a,b){ return (a.scheduled_at||0) <= (b.scheduled_at||0) ? a : b; }) : null;
 
       var breakdownParts = [];
-      breakdownParts.push(counts.completed + ' done');
-      if (counts.pending) breakdownParts.push(counts.pending + ' pending');
-      if (counts.running) breakdownParts.push(counts.running + ' running');
-      if (counts.failed) breakdownParts.push(counts.failed + ' failed');
-      if (counts.cancelled) breakdownParts.push(counts.cancelled + ' cancelled');
+      breakdownParts.push(window.tf('bd.done', '{n} done', { n: counts.completed }));
+      if (counts.pending) breakdownParts.push(window.tf('bd.pending', '{n} pending', { n: counts.pending }));
+      if (counts.running) breakdownParts.push(window.tf('bd.running', '{n} running', { n: counts.running }));
+      if (counts.failed) breakdownParts.push(window.tf('bd.failed', '{n} failed', { n: counts.failed }));
+      if (counts.cancelled) breakdownParts.push(window.tf('bd.cancelled', '{n} cancelled', { n: counts.cancelled }));
 
       var expanded = !!(window.__seriesExpanded && window.__seriesExpanded[seriesId]);
       var nextInfo = '';
       if (nextStep){
         var nt = new Date((nextStep.scheduled_at||0)*1000).toLocaleString();
-        nextInfo = '<div class="text-[11px] text-muted-foreground">Next: <span class="text-foreground">' + escHtml(nt) + '</span> <span class="text-muted-foreground">(' + fmtCountdown(nextStep.scheduled_at||0) + ')</span></div>';
+        nextInfo = '<div class="text-[11px] text-muted-foreground">' + escHtml(window.t('list.next', 'Next: ')) + '<span class="text-foreground">' + escHtml(nt) + '</span> <span class="text-muted-foreground">(' + escHtml(fmtCountdown(nextStep.scheduled_at||0)) + ')</span></div>';
       }
 
       var stepsInner = '';
@@ -3651,18 +3686,18 @@
                 '<span data-series-caret style="display:inline-block;transition:transform .15s;' + (expanded ? 'transform:rotate(90deg);' : '') + '">▶</span>' +
               '</button>' +
               '<span class="font-semibold text-sm">' + escHtml(label) + '</span>' +
-              '<span class="text-[10px] px-1.5 py-px rounded bg-primary/15 text-primary">Multiple updates</span>' +
-              '<span class="text-[10px] px-1.5 py-px rounded bg-muted text-muted-foreground">' + counts.completed + ' of ' + total + ' done</span>' +
+              '<span class="text-[10px] px-1.5 py-px rounded bg-primary/15 text-primary">' + escHtml(window.t('list.tagSeries', 'Multiple updates')) + '</span>' +
+              '<span class="text-[10px] px-1.5 py-px rounded bg-muted text-muted-foreground">' + escHtml(window.tf('list.ofDone', '{done} of {total} done', { done: counts.completed, total: total })) + '</span>' +
             '</div>' +
             '<div class="text-[11px] text-muted-foreground">' +
-              '<span class="font-mono">' + escHtml((steps[0] && steps[0].ads_account_id) || '') + '</span> · card: <span class="font-mono">' + escHtml((steps[0] && steps[0].card_id) || '') + '</span>' +
+              '<span class="font-mono">' + escHtml((steps[0] && steps[0].ads_account_id) || '') + '</span> · ' + escHtml(window.t('list.card', 'card:')) + ' <span class="font-mono">' + escHtml((steps[0] && steps[0].card_id) || '') + '</span>' +
             '</div>' +
-            (function(){ var pu = (steps[0] && steps[0].original_post_url) || ''; return pu ? '<div class="text-[11px] text-muted-foreground">Post: <a href="' + escHtml(pu) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(pu) + '</a></div>' : ''; })() +
+            (function(){ var pu = (steps[0] && steps[0].original_post_url) || ''; return pu ? '<div class="text-[11px] text-muted-foreground">' + escHtml(window.t('list.post', 'Post: ')) + '<a href="' + escHtml(pu) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(pu) + '</a></div>' : ''; })() +
             '<div class="text-[11px] text-muted-foreground">' + escHtml(breakdownParts.join(' · ')) + '</div>' +
             nextInfo +
           '</div>' +
           '<div class="flex md:flex-col gap-2 shrink-0">' +
-            (hasPending ? '<button class="btn-danger text-xs" data-vcancelseries="' + escHtml(seriesId) + '">Cancel series</button>' : '') +
+            (hasPending ? '<button class="btn-danger text-xs" data-vcancelseries="' + escHtml(seriesId) + '">' + escHtml(window.t('list.cancelSeries', 'Cancel series')) + '</button>' : '') +
           '</div>' +
         '</div>' +
         '<div class="rounded-xl border border-border divide-y divide-border" data-series-steps="' + escHtml(seriesId) + '" style="' + (expanded ? '' : 'display:none;') + '">' +
@@ -3711,16 +3746,18 @@
       b.onclick = function(){
         var sid = b.getAttribute('data-vcancelseries');
         window.showConfirm({
-          title: 'Cancel all pending updates in this series?',
-          message: 'All pending updates in this series will be cancelled.',
-          confirmLabel: 'Cancel series', confirmStyle: 'danger', dismissLabel: 'Keep them'
+          title: window.t('confirm.cancelSeriesTitle', 'Cancel all pending updates in this series?'),
+          message: window.t('confirm.cancelSeriesMsg', 'All pending updates in this series will be cancelled.'),
+          confirmLabel: window.t('confirm.cancelSeriesAccept', 'Cancel series'),
+          confirmStyle: 'danger',
+          dismissLabel: window.t('confirm.cancelSeriesDismiss', 'Keep them')
         }).then(function(ok){
           if (!ok) return;
           window.__schedulesUserAction = true;
           b.disabled = true;
           fetch('/api/schedules/series/' + encodeURIComponent(sid) + '/cancel', { method:'POST' })
             .then(function(){ try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch(e){} })
-            .catch(function(){ try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Failed to cancel series.', isError: true } })); } catch(e){} });
+            .catch(function(){ try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.seriesCancelFailed', 'Failed to cancel series.'), isError: true } })); } catch(e){} });
         });
       };
     });
@@ -3730,9 +3767,11 @@
       var id = parseInt(b.getAttribute('data-vcancel'), 10);
       b.onclick = function(){
         window.showConfirm({
-          title: 'Cancel this scheduled update?',
-          message: "This stops the update from running. This can't be undone.",
-          confirmLabel: 'Cancel update', confirmStyle: 'danger', dismissLabel: 'Keep it'
+          title: window.t('confirm.cancelOneTitle', 'Cancel this scheduled update?'),
+          message: window.t('confirm.cancelOneMsg', "This stops the update from running. This can't be undone."),
+          confirmLabel: window.t('confirm.cancelOneAccept', 'Cancel update'),
+          confirmStyle: 'danger',
+          dismissLabel: window.t('confirm.cancelOneDismiss', 'Keep it')
         }).then(function(ok){
           if (!ok) return;
           window.__schedulesUserAction = true;
@@ -3743,7 +3782,7 @@
               var badge = row.querySelector('[data-status-badge]');
               if (badge) {
                 badge.className = 'text-[10px] px-1.5 py-px rounded bg-zinc-500/10 text-zinc-500 line-through';
-                badge.textContent = 'cancelled';
+                badge.textContent = window.t('status.cancelled', 'cancelled');
               }
               b.style.display = 'none';
             }
@@ -3758,9 +3797,11 @@
       var id = parseInt(b.getAttribute('data-vrun'), 10);
       b.onclick = function(){
         window.showConfirm({
-          title: 'Run this scheduled update now?',
-          message: 'This runs the update immediately instead of at its scheduled time.',
-          confirmLabel: 'Run now', confirmStyle: 'primary', dismissLabel: 'Not now'
+          title: window.t('confirm.runNowTitle', 'Run this scheduled update now?'),
+          message: window.t('confirm.runNowMsg', 'This runs the update immediately instead of at its scheduled time.'),
+          confirmLabel: window.t('confirm.runNowAccept', 'Run now'),
+          confirmStyle: 'primary',
+          dismissLabel: window.t('confirm.runNowDismiss', 'Not now')
         }).then(function(ok){
           if (!ok) return;
           window.__schedulesUserAction = true;
@@ -3909,6 +3950,16 @@
     __doFetchAndRender(false);
   };
 
+  // Called by the i18n layer after the user picks a language. Re-renders the
+  // already-fetched list so its labels switch language. Purely presentational:
+  // no network request and no schedule state is touched.
+  window.__rerenderSchedulesForLang = function () {
+    try {
+      var cached = window.__lastRenderedSchedules;
+      if (cached && typeof renderSchedulesVanilla === 'function') renderSchedulesVanilla(cached);
+    } catch (e) {}
+  };
+
   // ── Cross-tab poller leader election ──────────────────────────────────────
   // With the app open in several tabs, each tab would otherwise poll /api/schedules,
   // multiplying the request load. Elect a single leader so only ONE tab polls at a time.
@@ -4034,7 +4085,7 @@
 </div>
 
 <!-- Media Picker Modal (Browse library / Upload). State in Alpine; final write-back is vanilla. -->
-<div id="media-picker-modal" x-data="mediaPicker()" x-init="init()" x-ignore>
+<div id="media-picker-modal" x-data="mediaPicker()" x-init="init()" @dmc-lang-changed.window="langTick++" x-ignore>
   <template x-if="open">
     <div class="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="close()"></div>
@@ -4042,12 +4093,12 @@
         <!-- Header -->
         <div class="flex items-start justify-between gap-3 p-4 border-b border-border">
           <div>
-            <h3 class="text-base font-semibold">Select new media</h3>
-            <p class="text-xs text-muted-foreground mt-0.5">
-              Showing <span class="font-medium" x-text="mediaType"></span> media — matches original
+            <h3 class="text-base font-semibold" data-i18n="picker.title">Select new media</h3>
+            <p class="text-xs text-muted-foreground mt-0.5"
+               x-text="window.tf('picker.showing', 'Showing {type} media — matches original', { type: mediaType })">
             </p>
           </div>
-          <button type="button" @click="close()" class="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted/50" title="Close">
+          <button type="button" @click="close()" class="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted/50" title="Close" data-i18n-title="picker.close">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
@@ -4056,10 +4107,10 @@
         <div class="flex gap-1 px-4 pt-3">
           <button type="button" @click="tab='browse'"
                   :class="tab==='browse' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/40'"
-                  class="px-3 py-1.5 text-xs rounded-lg border border-border">Browse library</button>
+                  class="px-3 py-1.5 text-xs rounded-lg border border-border" data-i18n="picker.tabBrowse">Browse library</button>
           <button type="button" @click="tab='upload'"
                   :class="tab==='upload' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/40'"
-                  class="px-3 py-1.5 text-xs rounded-lg border border-border">Upload</button>
+                  class="px-3 py-1.5 text-xs rounded-lg border border-border" data-i18n="picker.tabUpload">Upload</button>
         </div>
 
         <!-- Browse -->
@@ -4067,8 +4118,9 @@
           <div class="flex items-center gap-2 mb-3">
             <input type="text" x-model="searchQuery" @keydown.enter.prevent="doSearch()"
                    placeholder="Search media…"
+                   data-i18n-placeholder="picker.searchPlaceholder"
                    class="flex-1 px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:border-primary" />
-            <button type="button" @click="doSearch()" class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted">Search</button>
+            <button type="button" @click="doSearch()" class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted" data-i18n="picker.search">Search</button>
           </div>
 
           <template x-if="browseError">
@@ -4076,11 +4128,11 @@
           </template>
 
           <template x-if="loading">
-            <div class="text-xs text-muted-foreground py-8 text-center">Loading media…</div>
+            <div class="text-xs text-muted-foreground py-8 text-center" data-i18n="picker.loading">Loading media…</div>
           </template>
 
           <template x-if="!loading && items.length === 0 && !browseError">
-            <div class="text-xs text-muted-foreground py-8 text-center">No media found.</div>
+            <div class="text-xs text-muted-foreground py-8 text-center" data-i18n="picker.empty">No media found.</div>
           </template>
 
           <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -4104,7 +4156,7 @@
                   <span class="absolute top-1 right-1 text-[9px] px-1.5 py-0.5 rounded-full bg-black/60 text-white" x-text="item.media_type"></span>
                 </div>
                 <div class="p-2">
-                  <div class="text-[11px] font-medium truncate" x-text="item.name || item.file_name || '(untitled)'"></div>
+                  <div class="text-[11px] font-medium truncate" x-text="(langTick, item.name || item.file_name || window.t('picker.untitled', '(untitled)'))"></div>
                   <div class="text-[10px] text-muted-foreground font-mono truncate" x-text="item.media_key"></div>
                 </div>
               </button>
@@ -4114,14 +4166,14 @@
           <div class="mt-4 text-center" x-show="nextCursor">
             <button type="button" @click="loadMore()" :disabled="loadingMore"
                     class="px-4 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted disabled:opacity-50"
-                    x-text="loadingMore ? 'Loading…' : 'Load more'"></button>
+                    x-text="(langTick, loadingMore ? window.t('picker.loadingMore', 'Loading…') : window.t('picker.loadMore', 'Load more'))"></button>
           </div>
         </div>
 
         <!-- Upload -->
         <div class="flex-1 overflow-y-auto p-4" x-show="tab==='upload'">
-          <label class="text-xs text-muted-foreground mb-2 block">
-            Upload a new <span class="font-medium" x-text="mediaType"></span> file
+          <label class="text-xs text-muted-foreground mb-2 block"
+                 x-text="(langTick, window.tf('picker.uploadLabel', 'Upload a new {type} file', { type: mediaType }))">
           </label>
           <input type="file" x-ref="fileInput" @change="onFileChange($event)" :disabled="uploading"
                  :accept="mediaType === 'video' ? 'video/*' : 'image/*'"
@@ -4249,7 +4301,7 @@
     var mediaType = mediaObj.media_type || '';
     var aspect = mediaObj.aspect_ratio || '';
     var preview = mediaObj.preview || mediaObj.thumbnail || '';
-    if (!mediaKey) { toast('No media key was returned for the selected media.', true); return; }
+    if (!mediaKey) { toast(window.t('msg.noMediaKeyReturned', 'No media key was returned for the selected media.'), true); return; }
 
     // Series routing: if a series step invoked the picker, write into that step's state
     // instead of the single-flow inputs, then stop.
@@ -4315,6 +4367,9 @@
   window.mediaPicker = function mediaPicker() {
     return {
       open: false,
+      // Bumped on a language switch so Alpine re-evaluates the labels below,
+      // which call window.t() and are otherwise not reactive to the language.
+      langTick: 0,
       tab: 'browse',
       mediaType: 'image',
       adsAccountId: '',
@@ -4731,39 +4786,39 @@
         '<span class="font-mono text-xs break-all">' + escHtml(st.media_id) + '</span>' +
         (st.media_type ? ' <span class="text-[10px] text-muted-foreground">(' + escHtml(st.media_type) + (st.aspect ? ', ' + escHtml(st.aspect) : '') + ')</span>' : '');
     } else {
-      mediaLine = '<span class="text-[11px] text-muted-foreground">No new media selected (keeps the original ' + escHtml(origType) + ').</span>';
+      mediaLine = '<span class="text-[11px] text-muted-foreground">' + escHtml(window.tf('series.noNewMedia', 'No new media selected (keeps the original {type}).', { type: origType })) + '</span>';
     }
     return '' +
       '<div class="rounded-xl border border-border bg-background p-3 space-y-3" data-step="' + st.id + '">' +
         '<div class="flex items-center justify-between">' +
-          '<span class="text-xs font-semibold">Update #' + idx + '</span>' +
-          '<button type="button" data-series-remove="' + st.id + '" class="text-[11px] text-red-400 hover:text-red-300"' + (S.steps.length <= 2 ? ' style="display:none"' : '') + '>Remove</button>' +
+          '<span class="text-xs font-semibold">' + escHtml(window.tf('series.updateN', 'Update #{n}', { n: idx })) + '</span>' +
+          '<button type="button" data-series-remove="' + st.id + '" class="text-[11px] text-red-400 hover:text-red-300"' + (S.steps.length <= 2 ? ' style="display:none"' : '') + '>' + escHtml(window.t('series.remove', 'Remove')) + '</button>' +
         '</div>' +
         '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' +
           (appCard ? '' :
           '<div>' +
-            '<label class="text-[11px] text-muted-foreground mb-1 block">New Title</label>' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">' + escHtml(window.t('form.newTitle', 'New Title')) + '</label>' +
             '<input data-field="title" type="text" maxlength="70" value="' + escHtml(st.title) + '" class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" />' +
           '</div>') +
           '<div>' +
-            '<label class="text-[11px] text-muted-foreground mb-1 block">New Media (matches original ' + escHtml(origType) + ')</label>' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">' + escHtml(window.tf('series.newMediaLabel', 'New Media (matches original {type})', { type: origType })) + '</label>' +
             '<div class="flex items-center gap-2">' +
-              '<button type="button" data-series-pickmedia="' + st.id + '" class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground whitespace-nowrap">Select media</button>' +
-              (st.media_id ? '<button type="button" data-series-clearmedia="' + st.id + '" class="text-[11px] text-muted-foreground hover:text-foreground">Clear</button>' : '') +
+              '<button type="button" data-series-pickmedia="' + st.id + '" class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground whitespace-nowrap">' + escHtml(window.t('series.selectMedia', 'Select media')) + '</button>' +
+              (st.media_id ? '<button type="button" data-series-clearmedia="' + st.id + '" class="text-[11px] text-muted-foreground hover:text-foreground">' + escHtml(window.t('series.clear', 'Clear')) + '</button>' : '') +
             '</div>' +
             '<div class="mt-1 text-xs">' + mediaLine + '</div>' +
           '</div>' +
           (appCard ? '' :
           '<div class="md:col-span-2">' +
-            '<label class="text-[11px] text-muted-foreground mb-1 block">New Destination URL</label>' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">' + escHtml(window.t('form.newUrl', 'New Destination URL')) + '</label>' +
             '<input data-field="url" type="url" value="' + escHtml(st.url) + '" placeholder="https://example.com/landing-page" class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" />' +
           '</div>') +
           '<div class="md:col-span-2">' +
-            '<label class="text-[11px] text-muted-foreground mb-1 block">Scheduled time (must be in the future)</label>' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">' + escHtml(window.t('form.scheduledTime', 'Scheduled time (must be in the future)')) + '</label>' +
             '<div class="flex flex-wrap items-end gap-2">' +
-              '<div><div class="text-[10px] text-muted-foreground mb-0.5">Date</div>' +
+              '<div><div class="text-[10px] text-muted-foreground mb-0.5">' + escHtml(window.t('form.date', 'Date')) + '</div>' +
                 '<input data-field="date" type="date" value="' + escHtml(st.date) + '" class="px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" /></div>' +
-              '<div><div class="text-[10px] text-muted-foreground mb-0.5">Time (24-hour)</div>' +
+              '<div><div class="text-[10px] text-muted-foreground mb-0.5">' + escHtml(window.t('form.time24', 'Time (24-hour)')) + '</div>' +
                 '<input data-field="time" type="text" inputmode="numeric" maxlength="5" placeholder="HH:MM" value="' + escHtml(st.time) + '" style="width:7.5em;" class="px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm font-mono focus:ring-1 focus:ring-primary focus:border-primary" /></div>' +
             '</div>' +
           '</div>' +
@@ -4778,6 +4833,16 @@
     S.steps.forEach(function (st, i) { html += stepCardHtml(st, i + 1); });
     cont.innerHTML = html;
   }
+
+  // Re-render the step cards after a language switch. Anything the user has typed is
+  // pulled back into S.steps first, so only the labels change - entered values survive.
+  window.__rerenderSeriesForLang = function () {
+    try {
+      if (!S.steps || !S.steps.length) return;
+      readStateFromDom();
+      render();
+    } catch (e) {}
+  };
 
   function setError(msg) {
     var box = document.getElementById('series-error-box');
@@ -4824,8 +4889,8 @@
     setError('');
     var card = getLoadedCard();
     var ads = pickAdsAccountId();
-    if (!card || !ads) { setError('Load a card and select an Ads Account ID first (One-time tab).'); return null; }
-    if (S.steps.length < 2) { setError('A series needs at least 2 steps.'); return null; }
+    if (!card || !ads) { setError(window.t('series.errLoadCard', 'Load a card and select an Ads Account ID first (One-time tab).')); return null; }
+    if (S.steps.length < 2) { setError(window.t('series.minSteps', 'A series needs at least 2 steps.')); return null; }
 
     var off = chosenOffset();
     var origType = origMediaType();
@@ -4837,15 +4902,15 @@
     for (var i = 0; i < S.steps.length; i++) {
       var st = S.steps[i];
       var n = i + 1;
-      if (!st.date || !st.time) { setError('Step ' + n + ': choose a date and time.'); return null; }
+      if (!st.date || !st.time) { setError(window.tf('series.errStepDateTime', 'Step {n}: choose a date and time.', { n: n })); return null; }
       var epoch = epochFromParts(st.date, st.time, off);
-      if (!epoch || epoch <= nowSec) { setError('Step ' + n + ': scheduled time must be in the future.'); return null; }
+      if (!epoch || epoch <= nowSec) { setError(window.tf('series.errStepFuture', 'Step {n}: scheduled time must be in the future.', { n: n })); return null; }
       // App cards have no destination URL; keep the card's original URL unchanged and skip validation.
       var url = appCard ? (card.url || '') : (st.url || '').trim();
       if (!appCard) {
         var parsed;
         try { parsed = new URL(url); } catch (e) { parsed = null; }
-        if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) { setError('Step ' + n + ': enter a valid http(s) destination URL.'); return null; }
+        if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) { setError(window.tf('series.errStepUrl', 'Step {n}: enter a valid http(s) destination URL.', { n: n })); return null; }
       }
       var mid = (st.media_id || '').trim();
       if (mid && mid !== origMid && st.media_type && origType && normType(st.media_type) !== normType(origType)) {
