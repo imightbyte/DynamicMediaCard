@@ -826,8 +826,8 @@
       const j = await resp.json().catch(() => ({}));
 
       if (!resp.ok || j.ok === false) {
-        setStatus(j.error || 'Failed to load media details.', true);
-        if (alpineData) { alpineData.mediaDimLoading = false; alpineData.mediaDimError = (j.error || 'Failed to load media details.'); }
+        setStatus(j.error || window.t('msg.mediaLoadFailed', 'Failed to load media details.'), true);
+        if (alpineData) { alpineData.mediaDimLoading = false; alpineData.mediaDimError = (j.error || window.t('msg.mediaLoadFailed', 'Failed to load media details.')); }
         return;
       }
 
@@ -877,8 +877,8 @@
 
     } catch (err) {
       console.error('[MEDIA-CHECK] network error', err);
-      setStatus('Network error while loading media info.', true);
-      if (alpineData) { alpineData.mediaDimLoading = false; alpineData.mediaDimError = 'Network error while loading media info.'; }
+      setStatus(window.t('msg.mediaInfoNetErr', 'Network error while loading media info.'), true);
+      if (alpineData) { alpineData.mediaDimLoading = false; alpineData.mediaDimError = window.t('msg.mediaInfoNetErr', 'Network error while loading media info.'); }
     } finally {
       if (btn) btn.disabled = false;
       if (alpineData) alpineData.mediaDimLoading = false;
@@ -933,7 +933,7 @@
       if (msg && isErr) {
         // Only prefix-toast errors from this helper to avoid duplicate success toasts.
         try {
-          window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Save Schedule: ' + msg, isError: !!isErr } }));
+          window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.saveSchedulePrefix', 'Save Schedule: ') + msg, isError: !!isErr } }));
         } catch (e) {}
       }
     }
@@ -1035,7 +1035,7 @@
     };
 
     // (debug logs removed to reduce console noise)
-    setStatus('Saving…');
+    setStatus(window.t('msg.saving', 'Saving…'));
 
     fetch('/api/schedules', {
       method: 'POST',
@@ -1045,7 +1045,7 @@
       return r.json().catch(function(){ return {}; }).then(function(j){
         // response log removed (noisy)
         if (!r.ok) {
-          setStatus(j.detail || 'Failed to save.', true);
+          setStatus(j.detail || window.t('msg.saveFailed', 'Failed to save.'), true);
           return;
         }
           // Success message under the Save button (same place as errors), plus the toast.
@@ -1058,7 +1058,7 @@
       });
     }).catch(function(e){
       console.error('[SCHED-SAVE][standalone] network error', e);
-      setStatus('Network error saving schedule.', true);
+      setStatus(window.t('msg.saveNetErr', 'Network error saving schedule.'), true);
     });
   };
 
@@ -1190,11 +1190,11 @@
         data.saveSchedule();
       } catch (e) {
         console.error('[SCHED-SAVE] error inside data.saveSchedule', e);
-        var st3 = document.getElementById('save-sched-status'); if (st3) { st3.textContent = 'Error, see console'; st3.style.color = '#f87171'; }
+        var st3 = document.getElementById('save-sched-status'); if (st3) { st3.textContent = window.t('msg.errSeeConsole', 'Error, see console'); st3.style.color = '#f87171'; }
       }
     } else {
       console.warn('[SCHED-SAVE] saveSchedule method missing on data');
-      var st4 = document.getElementById('save-sched-status'); if (st4) { st4.textContent = 'Method missing'; st4.style.color = '#f87171'; }
+      var st4 = document.getElementById('save-sched-status'); if (st4) { st4.textContent = window.t('msg.methodMissing', 'Method missing'); st4.style.color = '#f87171'; }
     }
     } // end proceedWithData
   }; // end window.saveSchedule
@@ -1262,7 +1262,7 @@
       });
       var j = await r.json();
       if (!r.ok) {
-        var detail = j.detail || 'Validation failed.';
+        var detail = j.detail || window.t('msg.validationFailed', 'Validation failed.');
         if (errBox) {
           errBox.style.display = 'block';
           errBox.innerHTML = '';   // clear transient message
@@ -1278,17 +1278,20 @@
           if (String(detail).includes('403') || String(detail).toLowerCase().includes('ads api error')) {
             var hint = document.createElement('div');
             hint.style.cssText = 'margin-top:8px; font-size:10px; color:#fda4af; border-top:1px solid #7f1d1d; padding-top:6px;';
-            hint.innerHTML = 'This 403 from the X Ads API usually means:<br>' +
-              '• The X user you signed in with does not have access to the Ads Account ID you typed (for this App), or<br>' +
-              '• The App in your X Developer Project does not have "Ads API" enabled/approved.<br>' +
-              'Next: after a fresh sign-in, open <b>http://127.0.0.1:8000/api/ads-accounts</b> in a tab and paste what it returns. Also copy the Account ID exactly from https://ads.x.com while logged in as the same @user.';
+            hint.innerHTML = window.t('err403.title', 'This 403 from the X Ads API usually means:') + '<br>' +
+              window.t('err403.b1', '• The X user you signed in with does not have access to the Ads Account ID you typed (for this App), or') + '<br>' +
+              window.t('err403.b2', '• The App in your X Developer Project does not have "Ads API" enabled/approved.') + '<br>' +
+              window.tf('err403.next', 'Next: after a fresh sign-in, open <b>{url}</b> in a tab and paste what it returns. Also copy the Account ID exactly from {adsUrl} while logged in as the same @user.', {
+                url: window.location.origin + '/api/ads-accounts',
+                adsUrl: 'https://ads.x.com'
+              });
             errBox.appendChild(hint);
           }
         }
         // also try to surface in Alpine if it ever wakes up
         var root = document.querySelector('[x-data^="cardScheduler"]');
         if (root && root.__x && root.__x.$data) {
-          root.__x.$data.postError = (typeof detail === 'string' ? detail : 'Ads API error (see details above)');
+          root.__x.$data.postError = (typeof detail === 'string' ? detail : window.t('msg.adsApiError', 'Ads API error (see details above)'));
           root.__x.$data.loadedCard = null;
         }
         clearTransient();
@@ -1341,7 +1344,7 @@
           setScheduledLocalCombined(defVal);
         } catch (_) {}
 
-        if (typeof data.showToast === 'function') data.showToast('Card loaded. You can now schedule an update.');
+        if (typeof data.showToast === 'function') data.showToast(window.t('msg.cardLoaded', 'Card loaded. You can now schedule an update.'));
       }
 
       // Make the downstream sections visible (the old x-if blocks are now plain divs with display:none)
@@ -1393,7 +1396,8 @@
       setText('cc-id', card.id || card.card_id || '—');
 
       var typeEl = document.getElementById('cc-type');
-      if (typeEl) typeEl.textContent = (card.card_type || 'card').toUpperCase();
+      // card_type comes from the API and stays as-is; only the fallback is localized.
+      if (typeEl) typeEl.textContent = card.card_type ? card.card_type.toUpperCase() : window.t('card.badge', 'CARD');
 
       // App cards show only media on X (no title / destination URL). Hide those fields in
       // both the "Current Card" display and the one-time Schedule Update form. Detection uses a
@@ -1536,7 +1540,7 @@
     } catch (e) {
       console.error('[doValidatePost] network error', e);
       clearTransient();
-      if (errBox) { errBox.style.display = 'block'; errBox.textContent = 'Network error while validating the post.'; }
+      if (errBox) { errBox.style.display = 'block'; errBox.textContent = window.t('msg.validateNetErr', 'Network error while validating the post.'); }
     } finally {
       if (spinner) spinner.style.display = 'none';
       // hide any leftover progress text
@@ -1685,18 +1689,18 @@
           if (!act) {
             act = document.createElement('span');
             act.className = 'ml-auto text-xs text-green-500 font-medium';
-            act.textContent = '✓ Active';
+            act.textContent = window.t('ads.badgeActive', '✓ Active');
             container.appendChild(act);
           } else {
             act.style.display = '';
-            act.textContent = '✓ Active';
+            act.textContent = window.t('ads.badgeActive', '✓ Active');
           }
         } else {
           if (act && act.parentNode) act.parentNode.removeChild(act);
           if (!req) {
             req = document.createElement('span');
             req.className = 'ml-auto text-xs text-yellow-500 font-medium';
-            req.textContent = 'Required';
+            req.textContent = window.t('ads.badgeRequired', 'Required');
             container.appendChild(req);
           } else {
             req.style.display = '';
@@ -2449,11 +2453,11 @@
           // Make auth problems actionable
           const errStr = (this.adsError || '').toLowerCase();
           if (errStr.includes('401') || errStr.includes('403') || errStr.includes('unauthorized') || errStr.includes('bad authentication') || errStr.includes('token')) {
-            this.adsError = (this.adsError || 'Auth error') + ' — try signing out and signing back in with X.';
+            this.adsError = (this.adsError || window.t('ads.authError', 'Auth error')) + window.t('ads.authErrorTail', ' — try signing out and signing back in with X.');
           }
         } catch (e) {
           console.error('[ADS][TARGET][LOAD] fetch or processing FAILED:', e);
-          this.adsError = 'Failed to load accounts';
+          this.adsError = window.t('ads.loadAccountsFailed', 'Failed to load accounts');
         } finally {
           this._adsFetchInFlight = false;
           this.adsLoading = false;
@@ -2560,7 +2564,7 @@
           });
           const j = await r.json();
           if (!r.ok) {
-            this.postError = j.detail || 'Validation failed.';
+            this.postError = j.detail || window.t('msg.validationFailed', 'Validation failed.');
             this.loadedCard = null;
             this.showToast(this.postError, true);
             return;
@@ -2622,7 +2626,7 @@
             setScheduledLocalCombined(defVal);
           } catch(e){}
 
-          this.showToast('Card loaded. You can now schedule an update.');
+          this.showToast(window.t('msg.cardLoaded', 'Card loaded. You can now schedule an update.'));
           // Also ensure the blocks are visible if this Alpine path was the one that succeeded
           try {
             var cblk = document.getElementById('current-card-block');
@@ -2643,7 +2647,7 @@
             if (window.updateSaveButtonState) window.updateSaveButtonState();
           } catch(e){}
         } catch (e) {
-          this.postError = 'Network error while validating the post.';
+          this.postError = window.t('msg.validateNetErr', 'Network error while validating the post.');
           this.showToast(this.postError, true);
         } finally {
           this.validatingPost = false;
@@ -2684,8 +2688,11 @@
         this.mediaDimResult = null;
 
         if (!rawNew) {
-          this.mediaDimError = 'Enter a media key and click Check to load its details.';
-          setTimeout(() => { if (this.mediaDimError && this.mediaDimError.indexOf('Enter a media key') === 0) this.mediaDimError = null; }, 2000);
+          // Auto-clears after 2s, but only if this exact hint is still showing.
+          // Compared by identity rather than by text so it keeps working translated.
+          const hint = window.t('msg.enterKeyThenCheck', 'Enter a media key and click Check to load its details.');
+          this.mediaDimError = hint;
+          setTimeout(() => { if (this.mediaDimError === hint) this.mediaDimError = null; }, 2000);
           return;
         }
 
@@ -2704,7 +2711,7 @@
           } catch (e) {}
         }
         if (!adsId) {
-          this.mediaDimError = 'Enter or select an X Ads Account ID first, then click Check.';
+          this.mediaDimError = window.t('msg.adsFirstThenCheck', 'Enter or select an X Ads Account ID first, then click Check.');
           return;
         }
 
@@ -2718,9 +2725,9 @@
           const j = await r.json().catch(() => ({}));
 
           if (!r.ok || j.ok === false) {
-            this.mediaDimError = j.error || 'Could not load media info.';
+            this.mediaDimError = j.error || window.t('msg.mediaInfoFailed', 'Could not load media info.');
             this.mediaDimResult = null;
-            try { var ste = document.getElementById('media-check-status'); if (ste) { ste.innerHTML = (j.error || 'Could not load media info.'); ste.style.color = '#f87171'; } } catch(e){}
+            try { var ste = document.getElementById('media-check-status'); if (ste) { ste.innerHTML = (j.error || window.t('msg.mediaInfoFailed', 'Could not load media info.')); ste.style.color = '#f87171'; } } catch(e){}
           } else {
             this.mediaDimError = null;
             // Store under .new so existing display template continues to work.
@@ -2751,9 +2758,9 @@
           }
         } catch (e) {
           console.error('[MEDIA-CHECK] fetch error', e);
-          this.mediaDimError = 'Could not load media info (network).';
+          this.mediaDimError = window.t('msg.mediaInfoFailedNet', 'Could not load media info (network).');
           this.mediaDimResult = null;
-          try { var ste2 = document.getElementById('media-check-status'); if (ste2) { ste2.innerHTML = 'Could not load media info (network).'; ste2.style.color = '#f87171'; } } catch(e){}
+          try { var ste2 = document.getElementById('media-check-status'); if (ste2) { ste2.innerHTML = window.t('msg.mediaInfoFailedNet', 'Could not load media info (network).'); ste2.style.color = '#f87171'; } } catch(e){}
         } finally {
           this.mediaDimLoading = false;
         }
@@ -2776,7 +2783,7 @@
         const u = (this.newUrl || '').trim(); if (!u) return;
         try {
           const r = await fetch('/api/validate-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u }) });
-          const j = await r.json(); if (!j.valid) this.urlError = j.error || 'Invalid URL.';
+          const j = await r.json(); if (!j.valid) this.urlError = j.error || window.t('msg.invalidUrl', 'Invalid URL.');
         } catch (e) {}
       },
 
@@ -2839,7 +2846,7 @@
         }
 
         if (!this.loadedCard || !this.effectiveAdsAccountId) {
-          this.showToast('Load a card and select an Ads Account ID first.', true);
+          this.showToast(window.t('msg.loadCardAndAds', 'Load a card and select an Ads Account ID first.'), true);
           return;
         }
         if (this.mediaDimError) { this.showToast(this.mediaDimError, true); return; }
@@ -2888,7 +2895,7 @@
           const j = await r.json().catch(() => ({}));
           // response log removed
           if (!r.ok) {
-            const msg = j.detail || 'Failed to save schedule.';
+            const msg = j.detail || window.t('msg.saveScheduleFailed', 'Failed to save schedule.');
             this.showToast(msg, true);
             try { var sts = document.getElementById('save-sched-status'); if (sts) { sts.textContent = msg; sts.style.color = '#f87171'; } } catch(e){}
             return;
@@ -2932,8 +2939,8 @@
           await this.loadSchedules(true);
         } catch (e) {
           console.error('[SCHED-SAVE] fetch error', e);
-          this.showToast('Network error while saving schedule.', true);
-          try { var sts3 = document.getElementById('save-sched-status'); if (sts3) { sts3.textContent = 'Network error while saving schedule.'; sts3.style.color = '#f87171'; } } catch(e){}
+          this.showToast(window.t('msg.saveScheduleNetErr', 'Network error while saving schedule.'), true);
+          try { var sts3 = document.getElementById('save-sched-status'); if (sts3) { sts3.textContent = window.t('msg.saveScheduleNetErr', 'Network error while saving schedule.'); sts3.style.color = '#f87171'; } } catch(e){}
         } finally { this.saving = false; }
       },
 
@@ -2961,12 +2968,12 @@
           await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
           window.__schedulesUserAction = true;
           await this.loadSchedules(true);
-          this.showToast('Schedule cancelled.');
-        } catch (e) { this.showToast('Failed to cancel.', true); }
+          this.showToast(window.t('msg.scheduleCancelled', 'Schedule cancelled.'));
+        } catch (e) { this.showToast(window.t('msg.cancelFailed', 'Failed to cancel.'), true); }
       },
 
       async forceExecute(id) {
-        if (!confirm('Run this update immediately? (for testing)')) return;
+        if (!confirm(window.t('confirm.runNowTest', 'Run this update immediately? (for testing)'))) return;
         try {
           const r = await fetch(`/api/schedules/${id}/execute`, { method: 'POST' });
           const j = await r.json().catch(() => ({}));
@@ -2997,14 +3004,14 @@
             try { if (window.__startRunningPoller) window.__startRunningPoller(); } catch(e){}
 
             if (j.status === 'failed') {
-              this.showToast('Run now failed: ' + (j.result || 'see details in the list'), true);
+              this.showToast(window.t('msg.runNowFailedPrefix', 'Run now failed: ') + (j.result || window.t('msg.runNowSeeDetails', 'see details in the list')), true);
             } else {
-              this.showToast('Execution started — status will update automatically.');
+              this.showToast(window.t('msg.execStarted', 'Execution started — status will update automatically.'));
             }
           } else {
-            this.showToast(j.detail || 'Execution failed to start.', true);
+            this.showToast(j.detail || window.t('msg.execFailedStart', 'Execution failed to start.'), true);
           }
-        } catch (e) { this.showToast('Network error on manual execute.', true); }
+        } catch (e) { this.showToast(window.t('msg.execNetErr', 'Network error on manual execute.'), true); }
       },
 
       showToast(msg, isError = false) {
@@ -3825,16 +3832,16 @@
           fetch('/api/schedules/' + id + '/execute', {method:'POST'})
             .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
               if (!r.ok || j.status === 'failed') {
-                var msg = (j && (j.result || j.detail)) || 'Run now failed (see list for details)';
-                try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Run now: ' + msg, isError: true } })); } catch(e){}
+                var msg = (j && (j.result || j.detail)) || window.t('msg.runNowFailedList', 'Run now failed (see list for details)');
+                try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.runNowPrefix', 'Run now: ') + msg, isError: true } })); } catch(e){}
               } else {
                 // Start polling every 4s until the running item reaches a terminal state.
                 try { if (window.__startRunningPoller) window.__startRunningPoller(); } catch(e){}
-                try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Execution started — status will update automatically.' } })); } catch(e){}
+                try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.execStarted', 'Execution started — status will update automatically.') } })); } catch(e){}
               }
             }); })
             .catch(function(e){
-              try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Network error running now.', isError: true } })); } catch(e){}
+              try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.runNowNetErr', 'Network error running now.'), isError: true } })); } catch(e){}
             });
         });
       };
@@ -3865,7 +3872,7 @@
     });
   };
   window.forceExecuteVanilla = function(id){
-    if (!confirm('Run now?')) return;
+    if (!confirm(window.t('confirm.runNowShort', 'Run now?'))) return;
     window.__schedulesUserAction = true;
 
     // Optimistic mark running in the current rendered list (only the matching card)
@@ -3889,16 +3896,16 @@
     fetch('/api/schedules/'+id+'/execute', {method:'POST'})
       .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
         if (!r.ok || j.status === 'failed') {
-          var msg = (j && (j.result || j.detail)) || 'Run now failed (see list for details)';
-          try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Run now: ' + msg, isError: true } })); } catch(e){}
+          var msg = (j && (j.result || j.detail)) || window.t('msg.runNowFailedList', 'Run now failed (see list for details)');
+          try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.runNowPrefix', 'Run now: ') + msg, isError: true } })); } catch(e){}
         } else {
           // Poll every 4s until the schedule reaches a terminal state.
           try { if (window.__startRunningPoller) window.__startRunningPoller(); } catch(e){}
-          try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Execution started — status will update automatically.' } })); } catch(e){}
+          try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.execStarted', 'Execution started — status will update automatically.') } })); } catch(e){}
         }
       }); })
       .catch(function(e){
-        try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: 'Network error running now.', isError: true } })); } catch(e){}
+        try { window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.runNowNetErr', 'Network error running now.'), isError: true } })); } catch(e){}
       });
   };
 
@@ -4093,7 +4100,7 @@
           <div>
             <h3 class="text-base font-semibold" data-i18n="picker.title">Select new media</h3>
             <p class="text-xs text-muted-foreground mt-0.5"
-               x-text="window.tf('picker.showing', 'Showing {type} media — matches original', { type: mediaType })">
+               x-text="window.tf('picker.showing', 'Showing {type} media — matches original', { type: window.tMediaType(mediaType) })">
             </p>
           </div>
           <button type="button" @click="close()" class="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted/50" title="Close" data-i18n-title="picker.close">
@@ -4171,7 +4178,7 @@
         <!-- Upload -->
         <div class="flex-1 overflow-y-auto p-4" x-show="tab==='upload'">
           <label class="text-xs text-muted-foreground mb-2 block"
-                 x-text="(langTick, window.tf('picker.uploadLabel', 'Upload a new {type} file', { type: mediaType }))">
+                 x-text="(langTick, window.tf('picker.uploadLabel', 'Upload a new {type} file', { type: window.tMediaType(mediaType) }))">
           </label>
           <input type="file" x-ref="fileInput" @change="onFileChange($event)" :disabled="uploading"
                  :accept="mediaType === 'video' ? 'video/*' : 'image/*'"
@@ -4413,7 +4420,7 @@
         this.uploadedPreview = '';
         this.open = true;
         if (!this.adsAccountId) {
-          this.browseError = 'Load a card and select an Ads Account ID first.';
+          this.browseError = window.t('msg.loadCardAndAds', 'Load a card and select an Ads Account ID first.');
           return;
         }
         // Only fetch when the user actually opens the picker (no calls on page load).
@@ -4434,7 +4441,7 @@
       },
 
       async loadLibrary(reset) {
-        if (!this.adsAccountId) { this.browseError = 'Ads Account ID is required.'; return; }
+        if (!this.adsAccountId) { this.browseError = window.t('picker.adsRequired', 'Ads Account ID is required.'); return; }
         if (reset) { this.loading = true; this.browseError = ''; }
         else { this.loadingMore = true; }
         try {
@@ -4447,14 +4454,14 @@
           var resp = await fetch('/api/media-library?' + params.toString());
           var j = await resp.json().catch(() => ({}));
           if (!resp.ok || j.ok === false) {
-            this.browseError = (j && (j.detail || j.error)) || 'Failed to load media library.';
+            this.browseError = (j && (j.detail || j.error)) || window.t('picker.loadLibFailed', 'Failed to load media library.');
             return;
           }
           var incoming = Array.isArray(j.items) ? j.items : [];
           this.items = reset ? incoming : this.items.concat(incoming);
           this.nextCursor = j.next_cursor || null;
         } catch (e) {
-          this.browseError = 'Network error while loading media library.';
+          this.browseError = window.t('picker.loadLibNetErr', 'Network error while loading media library.');
         } finally {
           this.loading = false;
           this.loadingMore = false;
@@ -4468,11 +4475,14 @@
       selectItem(item) {
         if (!item) return;
         if (item.media_type !== this.mediaType) {
-          this.browseError = 'That media is a ' + (item.media_type || 'different type') + '. Pick a ' + this.mediaType + ' to match the original.';
+          this.browseError = window.tf('picker.typeMismatch', 'That media is a {type}. Pick a {want} to match the original.', {
+            type: item.media_type ? window.tMediaType(item.media_type) : window.t('picker.differentType', 'different type'),
+            want: window.tMediaType(this.mediaType)
+          });
           return;
         }
         if (item.media_status && item.media_status !== 'succeeded') {
-          this.browseError = 'That media is still processing. Pick another or try again later.';
+          this.browseError = window.t('picker.stillProcessing', 'That media is still processing. Pick another or try again later.');
           return;
         }
         this.browseError = '';
@@ -4487,7 +4497,7 @@
       },
 
       uploadFile(file) {
-        if (!this.adsAccountId) { this.uploadError = 'Ads Account ID is required to upload.'; return; }
+        if (!this.adsAccountId) { this.uploadError = window.t('picker.adsRequiredUpload', 'Ads Account ID is required to upload.'); return; }
         // Starting a new upload invalidates any prior in-flight status poll.
         this._uploadToken++;
         if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
@@ -4495,7 +4505,7 @@
         this.uploadedPreview = '';
         this.uploading = true;
         this.uploadProgress = 0;
-        this.uploadStatusText = 'Uploading…';
+        this.uploadStatusText = window.t('picker.uploading', 'Uploading…');
 
         var self = this;
         var fd = new FormData();
@@ -4508,7 +4518,7 @@
         xhr.upload.onprogress = function (e) {
           if (e.lengthComputable) {
             self.uploadProgress = Math.round((e.loaded / e.total) * 100);
-            self.uploadStatusText = 'Uploading… ' + self.uploadProgress + '%';
+            self.uploadStatusText = window.tf('picker.uploadingPct', 'Uploading… {pct}%', { pct: self.uploadProgress });
           }
         };
         xhr.onload = function () {
@@ -4516,24 +4526,24 @@
           try { j = JSON.parse(xhr.responseText || '{}'); } catch (e) {}
           if (xhr.status < 200 || xhr.status >= 300 || j.ok === false) {
             self.uploading = false;
-            self.uploadError = (j && (j.detail || j.error)) || 'Upload failed.';
+            self.uploadError = (j && (j.detail || j.error)) || window.t('picker.uploadFailed', 'Upload failed.');
             self.uploadStatusText = '';
             return;
           }
           self.uploadProgress = 100;
           if (j.preview) self.uploadedPreview = j.preview;
           if (j.status === 'processing') {
-            self.uploadStatusText = 'Processing media…';
+            self.uploadStatusText = window.t('picker.processing', 'Processing media…');
             self.pollStatus(j.media_key);
           } else {
             self.uploading = false;
-            self.uploadStatusText = 'Done.';
+            self.uploadStatusText = window.t('picker.done', 'Done.');
             self.finishUpload(j);
           }
         };
         xhr.onerror = function () {
           self.uploading = false;
-          self.uploadError = 'Network error during upload.';
+          self.uploadError = window.t('picker.uploadNetErr', 'Network error during upload.');
           self.uploadStatusText = '';
         };
         xhr.send(fd);
@@ -4568,14 +4578,14 @@
             if (resp.ok && j.ok !== false) {
               if (j.status === 'succeeded') {
                 self.uploading = false;
-                self.uploadStatusText = 'Done.';
+                self.uploadStatusText = window.t('picker.done', 'Done.');
                 if (j.preview) self.uploadedPreview = j.preview;
                 self.finishUpload(j);
                 return;
               }
               if (j.status === 'failed') {
                 self.uploading = false;
-                self.uploadError = 'Media processing failed.';
+                self.uploadError = window.t('picker.processFailed', 'Media processing failed.');
                 self.uploadStatusText = '';
                 return;
               }
@@ -4584,7 +4594,7 @@
           if (myToken !== self._uploadToken) return;
           if (attempts >= maxAttempts) {
             self.uploading = false;
-            self.uploadError = 'Timed out waiting for media to finish processing.';
+            self.uploadError = window.t('picker.processTimeout', 'Timed out waiting for media to finish processing.');
             self.uploadStatusText = '';
             return;
           }
@@ -4784,7 +4794,7 @@
         '<span class="font-mono text-xs break-all">' + escHtml(st.media_id) + '</span>' +
         (st.media_type ? ' <span class="text-[10px] text-muted-foreground">(' + escHtml(st.media_type) + (st.aspect ? ', ' + escHtml(st.aspect) : '') + ')</span>' : '');
     } else {
-      mediaLine = '<span class="text-[11px] text-muted-foreground">' + escHtml(window.tf('series.noNewMedia', 'No new media selected (keeps the original {type}).', { type: origType })) + '</span>';
+      mediaLine = '<span class="text-[11px] text-muted-foreground">' + escHtml(window.tf('series.noNewMedia', 'No new media selected (keeps the original {type}).', { type: window.tMediaType(origType) })) + '</span>';
     }
     return '' +
       '<div class="rounded-xl border border-border bg-background p-3 space-y-3" data-step="' + st.id + '">' +
@@ -4799,7 +4809,7 @@
             '<input data-field="title" type="text" maxlength="70" value="' + escHtml(st.title) + '" class="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm focus:ring-1 focus:ring-primary focus:border-primary" />' +
           '</div>') +
           '<div>' +
-            '<label class="text-[11px] text-muted-foreground mb-1 block">' + escHtml(window.tf('series.newMediaLabel', 'New Media (matches original {type})', { type: origType })) + '</label>' +
+            '<label class="text-[11px] text-muted-foreground mb-1 block">' + escHtml(window.tf('series.newMediaLabel', 'New Media (matches original {type})', { type: window.tMediaType(origType) })) + '</label>' +
             '<div class="flex items-center gap-2">' +
               '<button type="button" data-series-pickmedia="' + st.id + '" class="px-3 py-2 text-xs rounded-lg border border-border bg-muted/40 hover:bg-muted text-foreground whitespace-nowrap">' + escHtml(window.t('series.selectMedia', 'Select media')) + '</button>' +
               (st.media_id ? '<button type="button" data-series-clearmedia="' + st.id + '" class="text-[11px] text-muted-foreground hover:text-foreground">' + escHtml(window.t('series.clear', 'Clear')) + '</button>' : '') +
@@ -4912,7 +4922,9 @@
       }
       var mid = (st.media_id || '').trim();
       if (mid && mid !== origMid && st.media_type && origType && normType(st.media_type) !== normType(origType)) {
-        setError('Step ' + n + ': media type mismatch (original is ' + origType + ', selected is ' + st.media_type + ').'); return null;
+        setError(window.tf('series.errTypeMismatch', 'Step {n}: media type mismatch (original is {orig}, selected is {sel}).', {
+          n: n, orig: window.tMediaType(origType), sel: window.tMediaType(st.media_type)
+        })); return null;
       }
       epochs.push(epoch);
       built.push({
@@ -4924,8 +4936,8 @@
       });
     }
     for (var k = 1; k < epochs.length; k++) {
-      if (epochs[k] === epochs[k - 1]) { setError('Steps must not share the same time (no duplicates).'); return null; }
-      if (epochs[k] < epochs[k - 1]) { setError('Steps must be in strictly increasing chronological order.'); return null; }
+      if (epochs[k] === epochs[k - 1]) { setError(window.t('series.errDupTimes', 'Steps must not share the same time (no duplicates).')); return null; }
+      if (epochs[k] < epochs[k - 1]) { setError(window.t('series.errOrder', 'Steps must be in strictly increasing chronological order.')); return null; }
     }
 
     var label = (document.getElementById('series-label-input') || {}).value || '';
@@ -4954,20 +4966,20 @@
     var payload = collectAndValidate();
     if (!payload) return;
     if (btn) btn.disabled = true;
-    if (statusEl) { statusEl.textContent = 'Creating series…'; statusEl.style.color = ''; }
+    if (statusEl) { statusEl.textContent = window.t('series.creating', 'Creating series…'); statusEl.style.color = ''; }
     try {
       var r = await fetch('/api/schedules/series', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       var j = await r.json().catch(function () { return {}; });
       if (!r.ok || j.ok === false) {
-        var msg = (j && (j.detail || j.error)) || 'Failed to create series.';
-        setError(typeof msg === 'string' ? msg : 'Failed to create series.');
+        var msg = (j && (j.detail || j.error)) || window.t('series.createFailed', 'Failed to create series.');
+        setError(typeof msg === 'string' ? msg : window.t('series.createFailed', 'Failed to create series.'));
         if (statusEl) { statusEl.textContent = ''; }
-        toast('Could not create series.', true);
+        toast(window.t('series.createFailedToast', 'Could not create series.'), true);
         return;
       }
       setError('');
-      if (statusEl) { statusEl.textContent = 'Series created.'; statusEl.style.color = '#4ade80'; setTimeout(function () { if (statusEl && /created/i.test(statusEl.textContent || '')) { statusEl.textContent = ''; statusEl.style.color = ''; } }, 2200); }
-      toast('Series created — updates will run at their scheduled times.');
+      if (statusEl) { statusEl.textContent = window.t('series.created', 'Series created.'); statusEl.style.color = '#4ade80'; setTimeout(function () { if (statusEl && /created/i.test(statusEl.textContent || '')) { statusEl.textContent = ''; statusEl.style.color = ''; } }, 2200); }
+      toast(window.t('series.createdToast', 'Series created — updates will run at their scheduled times.'));
       // Reset the builder to a fresh single-step form.
       S.steps = [];
       S.steps.push(newStep());
@@ -4977,7 +4989,7 @@
       window.__schedulesUserAction = true;
       try { (window.__hardRefreshSchedulesList || window.refreshSchedulesList)(true); } catch (e) {}
     } catch (e) {
-      setError('Network error while creating the series.');
+      setError(window.t('series.createNetErr', 'Network error while creating the series.'));
       if (statusEl) { statusEl.textContent = ''; }
     } finally {
       if (btn) btn.disabled = false;

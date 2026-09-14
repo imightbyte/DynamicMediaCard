@@ -121,11 +121,9 @@
       'form.selectMediaTitle': '미디어 라이브러리를 둘러보거나 새 파일을 업로드합니다',
       'form.mediaHelp': '“새 미디어 선택”을 눌러 라이브러리에서 고르거나(원본과 같은 미디어 유형만 표시) 파일을 업로드하세요. 유형·가로세로 비율·미리보기는 자동으로 채워집니다.',
       'form.newUrl': '새 연결 URL',
-      'form.urlPlaceholder': 'https://example.com/landing-page',
       'form.scheduledTime': '예약 시간 (미래 시간이어야 합니다)',
       'form.date': '날짜',
       'form.time24': '시간 (24시간제)',
-      'form.timePlaceholder': 'HH:MM',
       'form.pastWarning': '예약 시간은 미래여야 합니다.',
       'form.timezone': '시간대',
       'form.save': '예약 저장',
@@ -140,7 +138,6 @@
       'series.addStep': '+ 단계 추가',
       'series.create': '시리즈 만들기',
       'series.createNote': '모든 업데이트가 각자 예약된 시간에 같은 카드에 적용됩니다.',
-      'series.stepHeading': '업데이트',
       'series.remove': '삭제',
       'series.minSteps': '시리즈는 최소 2개의 단계가 필요합니다.',
       'series.updateN': '업데이트 #{n}',
@@ -242,22 +239,82 @@
       'msg.scheduleSaved': '예약이 저장되었습니다.',
       'msg.scheduleSavedRun': '예약이 저장되었습니다. 지정한 시간에 실행됩니다.',
       'msg.saveFailed': '저장하지 못했습니다.',
-      'msg.netSaveSchedule': '예약을 저장하는 중 네트워크 오류가 발생했습니다.',
-      'msg.netValidate': '게시물을 확인하는 중 네트워크 오류가 발생했습니다.',
-      'msg.netMediaInfo': '미디어 정보를 불러오는 중 네트워크 오류가 발생했습니다.',
-      'msg.netRunNow': '지금 실행하는 중 네트워크 오류가 발생했습니다.',
       'msg.mediaInfoFailed': '미디어 정보를 불러오지 못했습니다.',
-      'msg.mediaDetailsFailed': '미디어 정보를 불러오지 못했습니다.',
-      'msg.seriesCreated': '시리즈가 생성되었습니다.',
-      'msg.seriesCreatedRun': '시리즈가 생성되었습니다. 각 업데이트가 예약된 시간에 실행됩니다.',
-      'msg.seriesCreating': '시리즈를 만드는 중…',
-      'msg.seriesFailed': '시리즈를 만들지 못했습니다.',
       'msg.seriesCancelFailed': '시리즈를 취소하지 못했습니다.',
-      'msg.runStarted': '실행을 시작했습니다 — 상태가 자동으로 갱신됩니다.',
       'msg.runNowPrefix': '지금 실행: ',
-      'msg.runNowFailed': '지금 실행에 실패했습니다 (자세한 내용은 목록에서 확인하세요)',
-
       // --- footer ---
+      // Status, errors and toasts raised by the imperative renderers.
+      'msg.mediaLoadFailed': '미디어 정보를 불러오지 못했습니다.',
+      'msg.mediaInfoNetErr': '미디어 정보를 불러오는 중 네트워크 오류가 발생했습니다.',
+      'msg.saveSchedulePrefix': '예약 저장: ',
+      'msg.saving': '저장 중…',
+      'msg.saveFailed': '저장하지 못했습니다.',
+      'msg.saveNetErr': '예약을 저장하는 중 네트워크 오류가 발생했습니다.',
+      'msg.errSeeConsole': '오류입니다. 콘솔을 확인하세요',
+      'msg.methodMissing': '메서드를 찾을 수 없음',
+      'msg.validationFailed': '확인에 실패했습니다.',
+      'msg.cardLoaded': '카드를 불러왔습니다. 이제 업데이트를 예약할 수 있습니다.',
+      'msg.validateNetErr': '게시물을 확인하는 중 네트워크 오류가 발생했습니다.',
+      'msg.adsApiError': 'X Ads API 오류 (위 세부 정보 참조)',
+      'msg.enterKeyThenCheck': '미디어 키를 입력한 뒤 확인을 클릭하면 세부 정보가 표시됩니다.',
+      'msg.adsFirstThenCheck': '먼저 X Ads 계정 ID를 입력하거나 선택한 뒤 확인을 클릭하세요.',
+      'msg.mediaInfoFailed': '미디어 정보를 불러올 수 없습니다.',
+      'msg.mediaInfoFailedNet': '미디어 정보를 불러올 수 없습니다 (네트워크).',
+      'msg.invalidUrl': '올바르지 않은 URL입니다.',
+      'msg.loadCardAndAds': '먼저 카드를 불러오고 X Ads 계정 ID를 선택하세요.',
+      'msg.saveScheduleFailed': '예약을 저장하지 못했습니다.',
+      'msg.saveScheduleNetErr': '예약을 저장하는 중 네트워크 오류가 발생했습니다.',
+      'msg.scheduleCancelled': '예약을 취소했습니다.',
+      'msg.cancelFailed': '취소하지 못했습니다.',
+      'msg.runNowFailedPrefix': '지금 실행 실패: ',
+      'msg.runNowSeeDetails': '목록에서 세부 정보를 확인하세요',
+      'msg.execStarted': '실행을 시작했습니다. 상태는 자동으로 업데이트됩니다.',
+      'msg.execFailedStart': '실행을 시작하지 못했습니다.',
+      'msg.execNetErr': '수동 실행 중 네트워크 오류가 발생했습니다.',
+      'msg.runNowFailedList': '지금 실행에 실패했습니다 (자세한 내용은 목록 참조)',
+      'msg.runNowPrefix': '지금 실행: ',
+      'msg.runNowNetErr': '지금 실행 중 네트워크 오류가 발생했습니다.',
+      'confirm.runNowTest': '이 업데이트를 지금 바로 실행할까요? (테스트용)',
+      'confirm.runNowShort': '지금 실행할까요?',
+      // 403 guidance shown when the Ads API rejects the request.
+      'err403.title': 'X Ads API에서 발생한 403 오류는 보통 다음을 의미합니다:',
+      'err403.b1': '• 로그인한 X 사용자에게 입력한 X Ads 계정 ID에 대한 권한이 없습니다 (이 App 기준). 또는',
+      'err403.b2': '• X 개발자 프로젝트의 App에서 "Ads API"가 활성화/승인되지 않았습니다.',
+      'err403.next': '다음 단계: 다시 로그인한 뒤 새 탭에서 <b>{url}</b>을(를) 열고 반환된 내용을 붙여넣으세요. 또한 동일한 @사용자로 로그인한 상태에서 {adsUrl}의 계정 ID를 정확히 복사하세요.',
+      // Ads account badges and load errors.
+      'ads.badgeActive': '✓ 활성',
+      'ads.badgeRequired': '필수',
+      'ads.authError': '인증 오류',
+      'ads.authErrorTail': ' — X에서 로그아웃한 뒤 다시 로그인해 보세요.',
+      'ads.loadAccountsFailed': '계정을 불러오지 못했습니다',
+      // Media picker runtime messages.
+      'picker.adsRequired': 'X Ads 계정 ID가 필요합니다.',
+      'picker.loadLibFailed': '미디어 라이브러리를 불러오지 못했습니다.',
+      'picker.loadLibNetErr': '미디어 라이브러리를 불러오는 중 네트워크 오류가 발생했습니다.',
+      // Phrased as "{want} 형식을" so the object particle is fixed; interpolating the
+      // noun directly would need 을/를 chosen per word.
+      'picker.typeMismatch': '선택한 미디어는 {type}입니다. 원본과 맞추려면 {want} 형식을 선택하세요.',
+      'picker.differentType': '다른 형식',
+      'picker.stillProcessing': '해당 미디어는 아직 처리 중입니다. 다른 항목을 선택하거나 잠시 후 다시 시도하세요.',
+      'picker.adsRequiredUpload': '업로드하려면 X Ads 계정 ID가 필요합니다.',
+      'picker.uploading': '업로드 중…',
+      'picker.uploadingPct': '업로드 중… {pct}%',
+      'picker.uploadFailed': '업로드하지 못했습니다.',
+      'picker.processing': '미디어 처리 중…',
+      'picker.done': '완료되었습니다.',
+      'picker.uploadNetErr': '업로드 중 네트워크 오류가 발생했습니다.',
+      'picker.processFailed': '미디어 처리에 실패했습니다.',
+      'picker.processTimeout': '미디어 처리가 완료되기를 기다리는 중 시간이 초과되었습니다.',
+      // Series builder save flow.
+      'series.errTypeMismatch': '{n}단계: 미디어 형식이 일치하지 않습니다 (원본 {orig}, 선택 {sel}).',
+      'series.errDupTimes': '각 단계는 같은 시간을 사용할 수 없습니다 (중복 불가).',
+      'series.errOrder': '각 단계는 시간순으로 앞뒤가 겹치지 않게 배치해야 합니다.',
+      'series.creating': '시리즈 생성 중…',
+      'series.createFailed': '시리즈를 생성하지 못했습니다.',
+      'series.createFailedToast': '시리즈를 생성할 수 없습니다.',
+      'series.created': '시리즈를 생성했습니다.',
+      'series.createdToast': '시리즈를 생성했습니다. 각 예약 시간에 업데이트가 실행됩니다.',
+      'series.createNetErr': '시리즈를 생성하는 중 네트워크 오류가 발생했습니다.',
       'footer.tos': '서비스 약관',
       'footer.tosHref': 'https://x.com/ko/tos',
       'footer.privacy': '개인정보 처리방침',
@@ -361,11 +418,9 @@
       'form.selectMediaTitle': 'メディアライブラリから選ぶか、新しいファイルをアップロードします',
       'form.mediaHelp': '「新しいメディアを選択」をクリックして、ライブラリから選ぶ（元と同じメディア種類のみ表示）かファイルをアップロードしてください。種類・アスペクト比・プレビューは自動で読み込まれます。',
       'form.newUrl': '新しいリンク先URL',
-      'form.urlPlaceholder': 'https://example.com/landing-page',
       'form.scheduledTime': '予約日時（未来の日時を指定してください）',
       'form.date': '日付',
       'form.time24': '時刻（24時間表記）',
-      'form.timePlaceholder': 'HH:MM',
       'form.pastWarning': '予約日時は未来の日時にしてください。',
       'form.timezone': 'タイムゾーン',
       'form.save': '予約を保存',
@@ -380,7 +435,6 @@
       'series.addStep': '+ ステップを追加',
       'series.create': 'シリーズを作成',
       'series.createNote': 'すべての更新が、それぞれの予約日時に同じカードへ適用されます。',
-      'series.stepHeading': '更新',
       'series.remove': '削除',
       'series.minSteps': 'シリーズには少なくとも2つのステップが必要です。',
       'series.updateN': '更新 #{n}',
@@ -482,22 +536,80 @@
       'msg.scheduleSaved': '予約を保存しました。',
       'msg.scheduleSavedRun': '予約を保存しました。指定した日時に実行されます。',
       'msg.saveFailed': '保存できませんでした。',
-      'msg.netSaveSchedule': '予約の保存中にネットワークエラーが発生しました。',
-      'msg.netValidate': 'ポストの確認中にネットワークエラーが発生しました。',
-      'msg.netMediaInfo': 'メディア情報の読み込み中にネットワークエラーが発生しました。',
-      'msg.netRunNow': '今すぐ実行の処理中にネットワークエラーが発生しました。',
       'msg.mediaInfoFailed': 'メディア情報を読み込めませんでした。',
-      'msg.mediaDetailsFailed': 'メディアの詳細を読み込めませんでした。',
-      'msg.seriesCreated': 'シリーズを作成しました。',
-      'msg.seriesCreatedRun': 'シリーズを作成しました。各更新は予約した日時に実行されます。',
-      'msg.seriesCreating': 'シリーズを作成中…',
-      'msg.seriesFailed': 'シリーズを作成できませんでした。',
       'msg.seriesCancelFailed': 'シリーズを取り消せませんでした。',
-      'msg.runStarted': '実行を開始しました — ステータスは自動的に更新されます。',
       'msg.runNowPrefix': '今すぐ実行: ',
-      'msg.runNowFailed': '今すぐ実行に失敗しました（詳細は一覧をご確認ください）',
-
       // --- footer ---
+      // Status, errors and toasts raised by the imperative renderers.
+      'msg.mediaLoadFailed': 'メディアの詳細を読み込めませんでした。',
+      'msg.mediaInfoNetErr': 'メディア情報の読み込み中にネットワークエラーが発生しました。',
+      'msg.saveSchedulePrefix': '予約の保存: ',
+      'msg.saving': '保存中…',
+      'msg.saveFailed': '保存できませんでした。',
+      'msg.saveNetErr': '予約の保存中にネットワークエラーが発生しました。',
+      'msg.errSeeConsole': 'エラーが発生しました。コンソールをご確認ください',
+      'msg.methodMissing': 'メソッドが見つかりません',
+      'msg.validationFailed': '確認に失敗しました。',
+      'msg.cardLoaded': 'カードを読み込みました。更新を予約できます。',
+      'msg.validateNetErr': '投稿の確認中にネットワークエラーが発生しました。',
+      'msg.adsApiError': 'X Ads API エラー（詳細は上記を参照）',
+      'msg.enterKeyThenCheck': 'メディアキーを入力して「確認」をクリックすると詳細が表示されます。',
+      'msg.adsFirstThenCheck': '先に X Ads アカウントIDを入力または選択してから「確認」をクリックしてください。',
+      'msg.mediaInfoFailed': 'メディア情報を読み込めませんでした。',
+      'msg.mediaInfoFailedNet': 'メディア情報を読み込めませんでした（ネットワーク）。',
+      'msg.invalidUrl': 'URLが正しくありません。',
+      'msg.loadCardAndAds': '先にカードを読み込み、X Ads アカウントIDを選択してください。',
+      'msg.saveScheduleFailed': '予約を保存できませんでした。',
+      'msg.saveScheduleNetErr': '予約の保存中にネットワークエラーが発生しました。',
+      'msg.scheduleCancelled': '予約を取り消しました。',
+      'msg.cancelFailed': '取り消せませんでした。',
+      'msg.runNowFailedPrefix': '今すぐ実行に失敗しました: ',
+      'msg.runNowSeeDetails': '詳細は一覧をご確認ください',
+      'msg.execStarted': '実行を開始しました。ステータスは自動で更新されます。',
+      'msg.execFailedStart': '実行を開始できませんでした。',
+      'msg.execNetErr': '手動実行中にネットワークエラーが発生しました。',
+      'msg.runNowFailedList': '今すぐ実行に失敗しました（詳細は一覧を参照）',
+      'msg.runNowPrefix': '今すぐ実行: ',
+      'msg.runNowNetErr': '今すぐ実行の際にネットワークエラーが発生しました。',
+      'confirm.runNowTest': 'この更新を今すぐ実行しますか？（テスト用）',
+      'confirm.runNowShort': '今すぐ実行しますか？',
+      // 403 guidance shown when the Ads API rejects the request.
+      'err403.title': 'X Ads API のこの403エラーは、通常次のいずれかを意味します:',
+      'err403.b1': '• ログイン中の X ユーザーに、入力した X Ads アカウントIDへのアクセス権がありません（この App の場合）。または',
+      'err403.b2': '• X 開発者プロジェクトの App で「Ads API」が有効化／承認されていません。',
+      'err403.next': '次の手順: 再度サインインしてから、新しいタブで <b>{url}</b> を開き、返された内容を貼り付けてください。また、同じ @ユーザーでログインした状態で {adsUrl} からアカウントIDを正確にコピーしてください。',
+      // Ads account badges and load errors.
+      'ads.badgeActive': '✓ 有効',
+      'ads.badgeRequired': '必須',
+      'ads.authError': '認証エラー',
+      'ads.authErrorTail': ' — X からサインアウトし、再度サインインしてお試しください。',
+      'ads.loadAccountsFailed': 'アカウントを読み込めませんでした',
+      // Media picker runtime messages.
+      'picker.adsRequired': 'X Ads アカウントIDが必要です。',
+      'picker.loadLibFailed': 'メディアライブラリを読み込めませんでした。',
+      'picker.loadLibNetErr': 'メディアライブラリの読み込み中にネットワークエラーが発生しました。',
+      'picker.typeMismatch': '選択したメディアは{type}です。元と合わせるには{want}を選択してください。',
+      'picker.differentType': '別の形式',
+      'picker.stillProcessing': 'このメディアはまだ処理中です。別のメディアを選ぶか、しばらくしてからお試しください。',
+      'picker.adsRequiredUpload': 'アップロードするには X Ads アカウントIDが必要です。',
+      'picker.uploading': 'アップロード中…',
+      'picker.uploadingPct': 'アップロード中… {pct}%',
+      'picker.uploadFailed': 'アップロードに失敗しました。',
+      'picker.processing': 'メディアを処理中…',
+      'picker.done': '完了しました。',
+      'picker.uploadNetErr': 'アップロード中にネットワークエラーが発生しました。',
+      'picker.processFailed': 'メディアの処理に失敗しました。',
+      'picker.processTimeout': 'メディアの処理完了を待機中にタイムアウトしました。',
+      // Series builder save flow.
+      'series.errTypeMismatch': 'ステップ{n}: メディア形式が一致しません（元は{orig}、選択は{sel}）。',
+      'series.errDupTimes': '各ステップに同じ日時は指定できません（重複不可）。',
+      'series.errOrder': '各ステップは日時が古い順に並ぶように設定してください。',
+      'series.creating': 'シリーズを作成中…',
+      'series.createFailed': 'シリーズを作成できませんでした。',
+      'series.createFailedToast': 'シリーズを作成できませんでした。',
+      'series.created': 'シリーズを作成しました。',
+      'series.createdToast': 'シリーズを作成しました。各予約時刻に更新が実行されます。',
+      'series.createNetErr': 'シリーズの作成中にネットワークエラーが発生しました。',
       'footer.tos': '利用規約',
       'footer.tosHref': 'https://x.com/ja/tos',
       'footer.privacy': 'プライバシーポリシー',
@@ -539,6 +651,21 @@
     if (!table) return fb;
     var v = table[key];
     return (v == null || v === '') ? fb : v;
+  }
+
+  // The API returns media types as the bare strings 'image' and 'video'. They get
+  // interpolated into sentences, so leaving them in English reads badly once the
+  // surrounding sentence is translated. Unknown values pass through untouched.
+  var MEDIA_TYPES = {
+    ko: { image: '이미지', video: '동영상', gif: 'GIF' },
+    ja: { image: '画像', video: '動画', gif: 'GIF' }
+  };
+  function tMediaType(type) {
+    var raw = String(type == null ? '' : type);
+    if (current === DEFAULT_LANG) return raw;
+    var table = MEDIA_TYPES[current];
+    var hit = table && table[raw.toLowerCase()];
+    return hit || raw;
   }
 
   // tf(key, englishFallback, vars) - same as t() but substitutes {name} tokens, so
@@ -656,6 +783,7 @@
 
   window.t = t;
   window.tf = tf;
+  window.tMediaType = tMediaType;
   window.applyI18n = applyI18n;
   window.setLang = setLang;
   window.getLang = getLang;
