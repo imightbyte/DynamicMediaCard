@@ -155,7 +155,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
           </div>
-          <p class="text-sm font-semibold" data-i18n="ads.title">X Ads Account</p>
+          <p class="text-sm font-semibold" data-ads-header data-i18n="ads.title">X Ads Account</p>
           <!-- The Active/Required badge is rendered/managed imperatively by __syncAdsBadgeAndPillsUI
                (single owner). We intentionally do NOT use Alpine x-if here: having both an x-if badge
                and the imperative sync caused two "Active" labels to appear. -->
@@ -212,7 +212,7 @@
               </div>
             </template>
             <template x-if="displayAdsAccounts.length === 0 && !adsError && !displayManualAdsAccountId">
-              <p class="text-xs text-muted-foreground" data-i18n-html="ads.noneDetectedHtml">
+              <p class="text-xs text-muted-foreground" data-no-accounts data-i18n-html="ads.noneDetectedHtml">
                 No accounts detected for this X user from the Ads API or your previous schedules.
                 You can still paste the Ads Account ID manually above. Find it at
                 <a href="https://ads.x.com" target="_blank" class="underline">ads.x.com</a> → Account settings.
@@ -1227,8 +1227,11 @@
     // Clear transient validation messages (only progress ones)
     function clearTransient() {
       if (errBox) {
-        var t = errBox.textContent || '';
-        if (t.indexOf('Contacting') === 0 || t.indexOf('Validating') === 0 || t.indexOf('Tweet') === 0) {
+        // Only progress messages are cleared here; real errors must survive.
+        // Flagged via an attribute rather than sniffing the text, which would
+        // stop matching as soon as the message is translated.
+        if (errBox.hasAttribute('data-transient')) {
+          errBox.removeAttribute('data-transient');
           errBox.textContent = '';
           errBox.style.display = 'none';
         }
@@ -1537,7 +1540,8 @@
     } finally {
       if (spinner) spinner.style.display = 'none';
       // hide any leftover progress text
-      if (errBox && errBox.textContent && (errBox.textContent.indexOf('Contacting') === 0 || errBox.textContent.indexOf('Validating') === 0)) {
+      if (errBox && errBox.hasAttribute('data-transient')) {
+        errBox.removeAttribute('data-transient');
         errBox.style.display = 'none';
         errBox.textContent = '';
       }
@@ -1665,9 +1669,7 @@
       const hasCurrent = !!current;
 
       // Badge in the header row (robust lookup + ensure only the correct one is visible)
-      let headerRow = Array.from(document.querySelectorAll('p.text-sm.font-semibold')).find(function(p){
-        return p && p.textContent && p.textContent.indexOf('X Ads Account') !== -1;
-      });
+      let headerRow = document.querySelector('p[data-ads-header]');
       if (headerRow && headerRow.parentElement) {
         const container = headerRow.parentElement;
         // Defensive: collapse any duplicate badges down to a single one of each kind
@@ -1827,12 +1829,8 @@
 
       // Hide the "No accounts detected" message when the real server list has items.
       if (serverCount > 0) {
-        const ps = (head ? head.parentElement : document).querySelectorAll('p.text-xs.text-muted-foreground');
-        ps.forEach(function(p){
-          if (p.textContent && p.textContent.indexOf('No accounts detected') !== -1) {
-            p.style.display = 'none';
-          }
-        });
+        const ps = (head ? head.parentElement : document).querySelectorAll('p[data-no-accounts]');
+        ps.forEach(function(p){ p.style.display = 'none'; });
       }
     } catch(e){}
   }
