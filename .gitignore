@@ -47,3 +47,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Local working documents (repo is public)
+*.docx
+~$*.docx
