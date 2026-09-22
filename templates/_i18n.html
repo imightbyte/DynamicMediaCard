@@ -18,8 +18,10 @@
       switching back to English restores the exact source text.
 
   Terminology note: translations follow the wording X Ads and comparable ad /
-  scheduling tools use in each locale (e.g. ja ウェブサイトカード・見出し・リンク先URL,
-  ko 웹사이트 카드・제목・연결 URL) rather than literal word-for-word translation.
+  scheduling tools use in each locale (e.g. ja ウェブサイトカード・ヘッドライン・リンク先URL,
+  ko 웹사이트 카드・헤드라인・웹사이트 URL) rather than literal word-for-word translation.
+  Field labels follow the wording advertisers see in X Ads Manager rather than
+  the descriptive phrasing used in X's help articles (ja 見出し, ko 제목).
 -->
 <script>
 (function () {
@@ -99,10 +101,10 @@
       'card.title': '현재 카드 (수정 불가)',
       'card.badge': '카드',
       'card.idLabel': '카드 ID (게시물 기준):',
-      'card.fieldTitle': '제목',
+      'card.fieldTitle': '헤드라인',
       'card.fieldMediaKey': '미디어 키',
       'card.fieldType': '유형:',
-      'card.fieldUrl': '연결 URL',
+      'card.fieldUrl': '웹사이트 URL',
       'card.mediaPreview': '미디어 미리보기',
       'card.readNote': '이 값들은 실제 카드(또는 광고 정보를 가져올 수 없을 때는 게시물)에서 읽어온 것입니다. 아래에서 새 값을 예약할 수 있습니다.',
 
@@ -114,13 +116,13 @@
       'form.tabCaptionOnetimeDesc': ' — 한 번만 실행되는 예약 업데이트입니다.',
       'form.tabCaptionSeriesName': '연속 업데이트',
       'form.tabCaptionSeriesDesc': ' — 같은 카드에 여러 업데이트를 예약해 순서대로 실행합니다.',
-      'form.newTitle': '새 제목',
+      'form.newTitle': '새 헤드라인',
       'form.newMediaKey': '새 미디어 키',
       'form.mediaPlaceholder': '예: 3_1234567890123456789',
       'form.selectMedia': '새 미디어 선택',
       'form.selectMediaTitle': '미디어 라이브러리를 둘러보거나 새 파일을 업로드합니다',
       'form.mediaHelp': '“새 미디어 선택”을 눌러 라이브러리에서 고르거나(원본과 같은 미디어 유형만 표시) 파일을 업로드하세요. 유형·가로세로 비율·미리보기는 자동으로 채워집니다.',
-      'form.newUrl': '새 연결 URL',
+      'form.newUrl': '새 웹사이트 URL',
       'form.scheduledTime': '예약 시간 (미래 시간이어야 합니다)',
       'form.date': '날짜',
       'form.time24': '시간 (24시간제)',
@@ -148,7 +150,7 @@
       'series.errLoadCard': '먼저 카드를 불러오고 X Ads 계정 ID를 선택하세요 (1회 업데이트 탭).',
       'series.errStepDateTime': '{n}단계: 날짜와 시간을 선택하세요.',
       'series.errStepFuture': '{n}단계: 예약 시간은 미래여야 합니다.',
-      'series.errStepUrl': '{n}단계: 올바른 http(s) 연결 URL을 입력하세요.',
+      'series.errStepUrl': '{n}단계: 올바른 http(s) 웹사이트 URL을 입력하세요.',
 
       // --- schedules list ---
       'list.title': '예약된 업데이트',
@@ -162,7 +164,7 @@
       'list.executed': '실행 시간: ',
       'list.willChange': '변경 예정:',
       'list.changed': '변경됨:',
-      'list.fTitle': '제목:',
+      'list.fTitle': '헤드라인:',
       'list.fMediaKey': '미디어 키:',
       'list.fUrl': 'URL:',
       'list.mediaPreviews': '미디어 미리보기:',
@@ -396,7 +398,7 @@
       'card.title': '現在のカード（編集不可）',
       'card.badge': 'カード',
       'card.idLabel': 'カードID（ポストから取得）:',
-      'card.fieldTitle': '見出し',
+      'card.fieldTitle': 'ヘッドライン',
       'card.fieldMediaKey': 'メディアキー',
       'card.fieldType': '種類:',
       'card.fieldUrl': 'リンク先URL',
@@ -411,7 +413,7 @@
       'form.tabCaptionOnetimeDesc': ' — 1回だけ実行する予約更新です。',
       'form.tabCaptionSeriesName': '複数更新',
       'form.tabCaptionSeriesDesc': ' — 同じカードに複数の更新を予約し、順番に実行します。',
-      'form.newTitle': '新しい見出し',
+      'form.newTitle': '新しいヘッドライン',
       'form.newMediaKey': '新しいメディアキー',
       'form.mediaPlaceholder': '例: 3_1234567890123456789',
       'form.selectMedia': '新しいメディアを選択',
@@ -459,7 +461,7 @@
       'list.executed': '実行日時: ',
       'list.willChange': '変更予定:',
       'list.changed': '変更済み:',
-      'list.fTitle': '見出し:',
+      'list.fTitle': 'ヘッドライン:',
       'list.fMediaKey': 'メディアキー:',
       'list.fUrl': 'URL:',
       'list.mediaPreviews': 'メディアプレビュー:',
