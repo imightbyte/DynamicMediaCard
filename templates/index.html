@@ -2906,10 +2906,14 @@
           try {
             var stsOk = document.getElementById('save-sched-status');
             if (stsOk) {
-              stsOk.textContent = window.t('msg.scheduleSaved', 'Schedule saved.');
+              // Cleared after 2.2s only if this exact message is still showing, so a
+              // newer message is never wiped. Compared by value rather than matched
+              // against English wording, which would not survive translation.
+              var okMsg = window.t('msg.scheduleSaved', 'Schedule saved.');
+              stsOk.textContent = okMsg;
               stsOk.style.color = '#4ade80';
               setTimeout(function(){
-                try { if (stsOk && /saved/i.test(stsOk.textContent||'')) { stsOk.textContent = ''; stsOk.style.color = ''; } } catch(e){}
+                try { if (stsOk && stsOk.textContent === okMsg) { stsOk.textContent = ''; stsOk.style.color = ''; } } catch(e){}
               }, 2200);
             }
           } catch(e){}
@@ -3822,7 +3826,7 @@
                   var badge = row.querySelector('[data-status-badge]') || row.querySelector('span[class*="bg-"][class*="/10"]');
                   if (badge) {
                     badge.className = 'text-[10px] px-1.5 py-px rounded bg-blue-500/10 text-blue-400';
-                    badge.textContent = 'running';
+                    badge.textContent = window.t('status.running', 'running');
                   }
                 }
               }
@@ -3860,7 +3864,7 @@
             var badge = row.querySelector('[data-status-badge]');
             if (badge) {
               badge.className = 'text-[10px] px-1.5 py-px rounded bg-zinc-500/10 text-zinc-500 line-through';
-              badge.textContent = 'cancelled';
+              badge.textContent = window.t('status.cancelled', 'cancelled');
             }
             btn.style.display = 'none';
           }
@@ -3886,7 +3890,7 @@
             var badge = row.querySelector('[data-status-badge]') || row.querySelector('span[class*="bg-"][class*="/10"]');
             if (badge) {
               badge.className = 'text-[10px] px-1.5 py-px rounded bg-blue-500/10 text-blue-400';
-              badge.textContent = 'running';
+              badge.textContent = window.t('status.running', 'running');
             }
           }
         }
@@ -4978,7 +4982,15 @@
         return;
       }
       setError('');
-      if (statusEl) { statusEl.textContent = window.t('series.created', 'Series created.'); statusEl.style.color = '#4ade80'; setTimeout(function () { if (statusEl && /created/i.test(statusEl.textContent || '')) { statusEl.textContent = ''; statusEl.style.color = ''; } }, 2200); }
+      if (statusEl) {
+        // Same identity check as the save-schedule status: clear only this message.
+        var createdMsg = window.t('series.created', 'Series created.');
+        statusEl.textContent = createdMsg;
+        statusEl.style.color = '#4ade80';
+        setTimeout(function () {
+          if (statusEl && statusEl.textContent === createdMsg) { statusEl.textContent = ''; statusEl.style.color = ''; }
+        }, 2200);
+      }
       toast(window.t('series.createdToast', 'Series created — updates will run at their scheduled times.'));
       // Reset the builder to a fresh single-step form.
       S.steps = [];
