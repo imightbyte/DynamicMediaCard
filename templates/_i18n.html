@@ -637,8 +637,35 @@
     return SUPPORTED.indexOf(l) !== -1 ? l : DEFAULT_LANG;
   }
 
+  // Values accepted in ?lang=. normalizeLang() can't be reused for this because it
+  // falls back to English for anything unknown, which would make a typo look like a
+  // deliberate request for English and overwrite the user's stored choice.
+  var QUERY_LANGS = {
+    en: 'en', ko: 'ko', ja: 'ja',
+    kr: 'ko', jp: 'ja', 'ko-kr': 'ko', 'ja-jp': 'ja'
+  };
+
+  function langFromQuery() {
+    try {
+      var m = /[?&]lang=([^&#]*)/.exec(window.location.search || '');
+      if (!m) return null;
+      var raw = decodeURIComponent((m[1] || '').replace(/\+/g, ' ')).toLowerCase().trim();
+      return Object.prototype.hasOwnProperty.call(QUERY_LANGS, raw) ? QUERY_LANGS[raw] : null;
+    } catch (e) { return null; }
+  }
+
   var current = DEFAULT_LANG;
   try { current = normalizeLang(window.localStorage.getItem(STORAGE_KEY)); } catch (e) {}
+
+  // An explicit ?lang= wins over the stored choice and is persisted immediately.
+  // Persisting here is what makes a shared link survive sign-in: the value is
+  // written before the user leaves for X, so it is still set when the OAuth
+  // callback returns them to "/" without the query string.
+  var __queryLang = langFromQuery();
+  if (__queryLang) {
+    current = __queryLang;
+    try { window.localStorage.setItem(STORAGE_KEY, current); } catch (e) {}
+  }
 
   function getLang() { return current; }
 
