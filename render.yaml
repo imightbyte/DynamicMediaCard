@@ -25,3 +25,9 @@ services:
         sync: false
       - key: X_REDIRECT_URI
         sync: false
+      # Seeds the first admin account; only read while the users table is
+      # empty. Clear both once real accounts exist.
+      - key: BOOTSTRAP_ADMIN_USERNAME
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

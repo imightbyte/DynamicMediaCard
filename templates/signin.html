@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Dynamic Media Card Tool{% endblock %}
+
+{% block body %}
+<div class="min-h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-sm">
+
+    <div class="text-center mb-8">
+      <div class="inline-flex items-center gap-2 mb-3">
+        <span class="text-2xl font-semibold tracking-tight" data-i18n="auth.appName">Dynamic Media Card Tool</span>
+      </div>
+      <p class="text-sm text-muted-foreground" data-i18n="auth.signInSubtitle">Sign in to continue.</p>
+    </div>
+
+    <div class="rounded-xl border border-border bg-card p-6">
+      {% if error %}
+      <div class="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+           role="alert" data-i18n="auth.badCredentials">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" action="/signin" class="space-y-4">
+        <div>
+          <label for="username" class="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5"
+                 data-i18n="auth.username">Username</label>
+          <input id="username" name="username" type="text" autocomplete="username" required autofocus
+                 class="w-full rounded-lg bg-background border border-input px-3 py-2 text-sm outline-none focus:border-primary" />
+        </div>
+
+        <div>
+          <label for="password" class="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5"
+                 data-i18n="auth.password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required
+                 class="w-full rounded-lg bg-background border border-input px-3 py-2 text-sm outline-none focus:border-primary" />
+        </div>
+
+        <button type="submit"
+                class="w-full rounded-lg bg-primary text-primary-foreground font-medium py-2 text-sm hover:opacity-90 transition"
+                data-i18n="auth.signIn">Sign in</button>
+      </form>
+    </div>
+
+    <p class="mt-5 text-center text-xs text-muted-foreground" data-i18n="auth.needAccount">
+      Need an account? Ask an admin to create one for you.
+    </p>
+
+  </div>
+</div>
+{% endblock %}

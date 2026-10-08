@@ -34,7 +34,7 @@
         <div class="flex items-center gap-2 text-sm">
           <span class="text-muted-foreground" data-i18n="nav.signedInAs">Signed in as</span>
           <strong>@{{ user.username }}</strong>
-          <a href="/logout" class="text-xs text-primary hover:underline px-2 py-0.5" data-i18n="nav.signOut">Sign out</a>
+          <a href="/logout" class="text-xs text-primary hover:underline px-2 py-0.5" data-i18n="nav.disconnectX">Disconnect</a>
         </div>
         {% else %}
         <template x-if="!user && !loading">
@@ -42,6 +42,18 @@
         </template>
         {% endif %}
         </div>
+
+        <!-- Application account (separate from the X connection above). -->
+        {% if app_user %}
+        <div class="flex items-center gap-2 pl-3 border-l border-border text-sm">
+          <span class="text-muted-foreground hidden sm:inline">{{ app_user.username }}</span>
+          <span class="text-[10px] px-1.5 py-px rounded bg-muted/60 text-muted-foreground">{{ app_role_label }}</span>
+          {% if is_admin %}
+          <a href="/admin" class="text-xs text-primary hover:underline px-1" data-i18n="nav.admin">Admin</a>
+          {% endif %}
+          <a href="/signout" class="text-xs text-muted-foreground hover:text-foreground underline px-1" data-i18n="nav.appSignOut">Sign out</a>
+        </div>
+        {% endif %}
       </div>
     </div>
   </nav>
