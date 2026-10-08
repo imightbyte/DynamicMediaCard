@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}User management — Dynamic Media Card Tool{% endblock %}
+
+{% block body %}
+<div class="max-w-4xl mx-auto px-4 py-10">
+
+  <div class="flex items-start justify-between gap-4 mb-8">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight" data-i18n="admin.title">User management</h1>
+      <p class="text-sm text-muted-foreground mt-1" data-i18n="admin.subtitle">
+        Create accounts and assign a role. New users set their own password on first sign-in.
+      </p>
+    </div>
+    <a href="/" class="shrink-0 text-sm rounded-lg border border-border px-3 py-1.5 hover:bg-accent transition"
+       data-i18n="admin.backToTool">Back to the tool</a>
+  </div>
+
+  <!-- Add user -->
+  <div class="rounded-xl border border-border bg-card p-5 mb-6">
+    <h2 class="text-sm font-medium mb-4" data-i18n="admin.addUser">Add user</h2>
+
+    <div class="flex flex-col sm:flex-row gap-3 sm:items-end">
+      <div class="flex-1">
+        <label for="nu-username" class="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5"
+               data-i18n="admin.username">Username</label>
+        <input id="nu-username" type="text" autocomplete="off"
+               class="w-full rounded-lg bg-background border border-input px-3 py-2 text-sm outline-none focus:border-primary" />
+      </div>
+      <div class="sm:w-48">
+        <label for="nu-role" class="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5"
+               data-i18n="admin.role">Role</label>
+        <select id="nu-role"
+                class="w-full rounded-lg bg-background border border-input px-3 py-2 text-sm outline-none focus:border-primary">
+          {% for r in roles %}
+          <option value="{{ r.value }}" {% if r.value == 'user' %}selected{% endif %}>{{ r.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button id="nu-create" type="button"
+              class="rounded-lg bg-primary text-primary-foreground font-medium px-4 py-2 text-sm hover:opacity-90 transition"
+              data-i18n="admin.create">Create</button>
+    </div>
+
+    <p class="mt-3 text-[11px] text-muted-foreground" data-i18n="admin.roleHelp">
+      Admin manages users and sees every schedule. Strategist and CP/CAM see every schedule but cannot manage users. User sees only their own.
+    </p>
+
+    <div id="nu-error" class="hidden mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert"></div>
+
+    <!-- Temporary password is shown once, right after creation. -->
+    <div id="nu-temp" class="hidden mt-4 rounded-lg border border-green-500/40 bg-green-500/10 p-3">
+      <div class="text-xs uppercase tracking-widest text-green-400 mb-1" data-i18n="admin.tempPasswordFor">Temporary password for</div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span id="nu-temp-user" class="text-sm font-medium"></span>
+        <code id="nu-temp-pw" class="rounded bg-background/60 border border-border px-2 py-1 text-sm font-mono select-all"></code>
+        <button id="nu-temp-copy" type="button"
+                class="text-xs rounded border border-border px-2 py-1 hover:bg-accent transition"
+                data-i18n="admin.copy">Copy</button>
+      </div>
+      <p class="mt-2 text-[11px] text-muted-foreground" data-i18n="admin.tempPasswordOnce">
+        Shown once. Copy it now and share it with the user — it cannot be retrieved later, only reset.
+      </p>
+    </div>
+  </div>
+
+  <!-- User list -->
+  <div class="rounded-xl border border-border bg-card overflow-hidden">
+    <div class="px-5 py-3 border-b border-border flex items-center justify-between">
+      <h2 class="text-sm font-medium" data-i18n="admin.users">Users</h2>
+      <button id="u-refresh" type="button"
+              class="text-xs rounded border border-border px-2 py-1 hover:bg-accent transition"
+              data-i18n="admin.refresh">Refresh</button>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-[10px] uppercase tracking-widest text-muted-foreground">
+            <th class="px-5 py-2 font-medium" data-i18n="admin.colUser">User</th>
+            <th class="px-5 py-2 font-medium" data-i18n="admin.colRole">Role</th>
+            <th class="px-5 py-2 font-medium" data-i18n="admin.colStatus">Status</th>
+            <th class="px-5 py-2 font-medium text-right" data-i18n="admin.colActions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="u-body" class="divide-y divide-border">
+          <tr><td colspan="4" class="px-5 py-6 text-center text-muted-foreground" data-i18n="admin.loading">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  'use strict';
+
+  var ME_ID = {{ app_user.id|tojson }};
+  var ROLES = {{ roles|tojson }};
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  var errEl = document.getElementById('nu-error');
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.classList.remove('hidden');
+  }
+  function clearError() { errEl.classList.add('hidden'); }
+
+  function roleOptions(selected) {
+    return ROLES.map(function (r) {
+      return '<option value="' + esc(r.value) + '"' + (r.value === selected ? ' selected' : '') + '>' + esc(r.label) + '</option>';
+    }).join('');
+  }
+
+  function renderUsers(users) {
+    var body = document.getElementById('u-body');
+    if (!users.length) {
+      body.innerHTML = '<tr><td colspan="4" class="px-5 py-6 text-center text-muted-foreground">'
+        + esc(window.t('admin.noUsers', 'No users yet.')) + '</td></tr>';
+      return;
+    }
+    body.innerHTML = users.map(function (u) {
+      var isMe = String(u.id) === String(ME_ID);
+      var status = u.must_change_password
+        ? '<span class="text-[10px] px-1.5 py-px rounded bg-amber-500/10 text-amber-400">'
+            + esc(window.t('admin.pendingFirstSignIn', 'awaiting first sign-in')) + '</span>'
+        : '<span class="text-[10px] px-1.5 py-px rounded bg-green-500/10 text-green-400">'
+            + esc(window.t('admin.active', 'active')) + '</span>';
+
+      return ''
+        + '<tr data-user-row="' + esc(u.id) + '">'
+        +   '<td class="px-5 py-3">'
+        +     '<span class="font-medium">' + esc(u.username) + '</span>'
+        +     (isMe ? ' <span class="text-[10px] text-muted-foreground">(' + esc(window.t('admin.you', 'you')) + ')</span>' : '')
+        +   '</td>'
+        +   '<td class="px-5 py-3">'
+        +     '<select data-role-for="' + esc(u.id) + '" class="rounded bg-background border border-input px-2 py-1 text-xs outline-none focus:border-primary">'
+        +       roleOptions(u.role)
+        +     '</select>'
+        +   '</td>'
+        +   '<td class="px-5 py-3">' + status + '</td>'
+        +   '<td class="px-5 py-3 text-right whitespace-nowrap">'
+        +     '<button type="button" data-reset="' + esc(u.id) + '" class="text-xs rounded border border-border px-2 py-1 hover:bg-accent transition">'
+        +       esc(window.t('admin.resetPassword', 'Reset password')) + '</button> '
+        +     (isMe ? '' :
+              '<button type="button" data-delete="' + esc(u.id) + '" data-username="' + esc(u.username) + '" class="text-xs rounded border border-destructive/40 text-destructive px-2 py-1 hover:bg-destructive/10 transition">'
+        +       esc(window.t('admin.delete', 'Delete')) + '</button>')
+        +   '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  async function loadUsers() {
+    try {
+      var res = await fetch('/api/admin/users');
+      var j = await res.json();
+      renderUsers(j.users || []);
+    } catch (e) {
+      document.getElementById('u-body').innerHTML =
+        '<tr><td colspan="4" class="px-5 py-6 text-center text-destructive">'
+        + esc(window.t('admin.loadFailed', 'Could not load users.')) + '</td></tr>';
+    }
+  }
+
+  function showTempPassword(username, pw) {
+    document.getElementById('nu-temp-user').textContent = username;
+    document.getElementById('nu-temp-pw').textContent = pw;
+    document.getElementById('nu-temp').classList.remove('hidden');
+  }
+
+  document.getElementById('nu-create').addEventListener('click', async function () {
+    clearError();
+    var username = document.getElementById('nu-username').value.trim();
+    var role = document.getElementById('nu-role').value;
+    if (!username) {
+      showError(window.t('admin.errNoUsername', 'Enter a username.'));
+      return;
+    }
+    try {
+      var res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, role: role })
+      });
+      var j = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        showError(j.detail || window.t('admin.errCreate', 'Could not create the user.'));
+        return;
+      }
+      document.getElementById('nu-username').value = '';
+      showTempPassword(j.user.username, j.temp_password);
+      loadUsers();
+    } catch (e) {
+      showError(window.t('admin.errNetwork', 'Network error. Please try again.'));
+    }
+  });
+
+  document.getElementById('nu-temp-copy').addEventListener('click', function () {
+    var pw = document.getElementById('nu-temp-pw').textContent;
+    navigator.clipboard.writeText(pw).then(function () {
+      var b = document.getElementById('nu-temp-copy');
+      var original = b.textContent;
+      b.textContent = window.t('admin.copied', 'Copied');
+      setTimeout(function () { if (b.textContent === window.t('admin.copied', 'Copied')) b.textContent = original; }, 1500);
+    });
+  });
+
+  document.getElementById('u-refresh').addEventListener('click', loadUsers);
+
+  // Delegated so the handlers survive re-rendering the table.
+  document.getElementById('u-body').addEventListener('click', async function (e) {
+    var resetBtn = e.target.closest('[data-reset]');
+    var delBtn = e.target.closest('[data-delete]');
+
+    if (resetBtn) {
+      clearError();
+      var rid = resetBtn.getAttribute('data-reset');
+      if (!confirm(window.t('admin.confirmReset', 'Reset this user\u2019s password? Their current one stops working immediately.'))) return;
+      try {
+        var res = await fetch('/api/admin/users/' + encodeURIComponent(rid) + '/reset-password', { method: 'POST' });
+        var j = await res.json().catch(function () { return {}; });
+        if (!res.ok) { showError(j.detail || window.t('admin.errReset', 'Could not reset the password.')); return; }
+        showTempPassword(j.user.username, j.temp_password);
+        loadUsers();
+      } catch (err) {
+        showError(window.t('admin.errNetwork', 'Network error. Please try again.'));
+      }
+      return;
+    }
+
+    if (delBtn) {
+      clearError();
+      var did = delBtn.getAttribute('data-delete');
+      var dname = delBtn.getAttribute('data-username') || '';
+      if (!confirm(window.tf('admin.confirmDelete', 'Delete {name}? This cannot be undone.', { name: dname }))) return;
+      try {
+        var res2 = await fetch('/api/admin/users/' + encodeURIComponent(did), { method: 'DELETE' });
+        var j2 = await res2.json().catch(function () { return {}; });
+        if (!res2.ok) { showError(j2.detail || window.t('admin.errDelete', 'Could not delete the user.')); return; }
+        loadUsers();
+      } catch (err) {
+        showError(window.t('admin.errNetwork', 'Network error. Please try again.'));
+      }
+    }
+  });
+
+  document.getElementById('u-body').addEventListener('change', async function (e) {
+    var sel = e.target.closest('[data-role-for]');
+    if (!sel) return;
+    clearError();
+    var uid = sel.getAttribute('data-role-for');
+    try {
+      var res = await fetch('/api/admin/users/' + encodeURIComponent(uid) + '/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: sel.value })
+      });
+      var j = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        showError(j.detail || window.t('admin.errRole', 'Could not change the role.'));
+        loadUsers();  // put the dropdown back to the stored value
+        return;
+      }
+      loadUsers();
+    } catch (err) {
+      showError(window.t('admin.errNetwork', 'Network error. Please try again.'));
+      loadUsers();
+    }
+  });
+
+  loadUsers();
+})();
+</script>
+{% endblock %}

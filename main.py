@@ -62,6 +62,13 @@ SECRET_KEY = os.getenv("SECRET_KEY", "")
 # development over http://localhost still works.
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 
+# First admin account, seeded on startup only when the users table is empty.
+# Set both on Render; once an admin exists these are ignored.
+BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
+BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+
+MIN_PASSWORD_LENGTH = 8
+
 if not SECRET_KEY or len(SECRET_KEY) < 16:
     SECRET_KEY = "dev-insecure-change-me-" + secrets.token_hex(16)
 
@@ -126,6 +133,144 @@ def get_db():
     conn.execute("PRAGMA busy_timeout=5000;")
     return conn
 
+# --------------------------------------------------------------------------------------
+# Application accounts (sign-in gate in front of the X OAuth connection)
+#
+# These accounts are separate from the X identity. Signing in here only opens the
+# tool; the user still connects their own X account afterwards, and schedules stay
+# keyed on the X user id as before.
+# --------------------------------------------------------------------------------------
+
+ROLE_ADMIN = "admin"
+ROLE_STRATEGIST = "strategist"
+ROLE_CP_CAM = "cp_cam"
+ROLE_USER = "user"
+
+ROLES = (ROLE_ADMIN, ROLE_STRATEGIST, ROLE_CP_CAM, ROLE_USER)
+
+ROLE_LABELS = {
+    ROLE_ADMIN: "Admin",
+    ROLE_STRATEGIST: "Strategist",
+    ROLE_CP_CAM: "CP/CAM",
+    ROLE_USER: "User",
+}
+
+# Only admins manage accounts. Strategists and CP/CAM get a read-across view of
+# every schedule but no user management.
+ROLES_SEEING_ALL_SCHEDULES = (ROLE_ADMIN, ROLE_STRATEGIST, ROLE_CP_CAM)
+
+def can_manage_users(user: Optional[Dict[str, Any]]) -> bool:
+    return bool(user) and user.get("role") == ROLE_ADMIN
+
+def can_see_all_schedules(user: Optional[Dict[str, Any]]) -> bool:
+    return bool(user) and user.get("role") in ROLES_SEEING_ALL_SCHEDULES
+
+# scrypt comes from the standard library, so there is no native wheel to build on
+# deploy. Parameters follow the OWASP minimum (n=2^14, r=8, p=1).
+_SCRYPT_N = 2 ** 14
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32)
+    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${salt.hex()}${dk.hex()}"
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, n, r, p, salt_hex, hash_hex = (stored or "").split("$")
+        if algo != "scrypt":
+            return False
+        dk = hashlib.scrypt(
+            password.encode("utf-8"), salt=bytes.fromhex(salt_hex),
+            n=int(n), r=int(r), p=int(p), dklen=len(hash_hex) // 2,
+        )
+        return hmac.compare_digest(dk.hex(), hash_hex)
+    except Exception:
+        # Malformed hash, wrong field count, bad hex — all read as "does not match".
+        return False
+
+def generate_temp_password() -> str:
+    # Unambiguous alphabet: no O/0, l/1/I, so a password read off a screen and
+    # typed by hand does not bounce.
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(12))
+
+def normalize_username(raw: str) -> str:
+    return (raw or "").strip()
+
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    try:
+        # username is COLLATE NOCASE, so this match is case-insensitive.
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (normalize_username(username),)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+def get_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+def count_admins(exclude_id: Optional[int] = None) -> int:
+    conn = get_db()
+    try:
+        if exclude_id is None:
+            row = conn.execute("SELECT COUNT(*) FROM users WHERE role = ?", (ROLE_ADMIN,)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role = ? AND id != ?", (ROLE_ADMIN, exclude_id)
+            ).fetchone()
+        return int(row[0] if row else 0)
+    finally:
+        conn.close()
+
+def create_app_user(username: str, password: str, role: str, must_change: bool, created_by: Optional[str]) -> Dict[str, Any]:
+    username = normalize_username(username)
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            """INSERT INTO users (username, password_hash, role, must_change_password, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (username, hash_password(password), role, 1 if must_change else 0, time.time(), created_by),
+        )
+        conn.commit()
+        new_id = cur.lastrowid
+    finally:
+        conn.close()
+    return get_user_by_id(new_id)
+
+def seed_bootstrap_admin():
+    """Create the first admin from the environment, only when no users exist at all.
+
+    Once any account exists this is a no-op, so rotating the env vars later cannot
+    silently add a second admin or overwrite the real one.
+    """
+    conn = get_db()
+    try:
+        existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    finally:
+        conn.close()
+    if existing:
+        return
+    if not BOOTSTRAP_ADMIN_USERNAME or not BOOTSTRAP_ADMIN_PASSWORD:
+        print(
+            "[auth] No users exist and BOOTSTRAP_ADMIN_USERNAME / BOOTSTRAP_ADMIN_PASSWORD "
+            "are not set — nobody can sign in. Set both and restart."
+        )
+        return
+    if len(BOOTSTRAP_ADMIN_PASSWORD) < MIN_PASSWORD_LENGTH:
+        print(f"[auth] BOOTSTRAP_ADMIN_PASSWORD is shorter than {MIN_PASSWORD_LENGTH} characters — refusing to seed.")
+        return
+    # The operator chose this password deliberately, so it is not forced to change
+    # on first sign-in the way an admin-issued temporary password is.
+    create_app_user(BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_PASSWORD, ROLE_ADMIN, must_change=False, created_by="bootstrap")
+    print(f"[auth] Seeded first admin account '{BOOTSTRAP_ADMIN_USERNAME}'.")
+
 def init_db():
     conn = get_db()
     c = conn.cursor()
@@ -184,6 +329,29 @@ def init_db():
         c.execute("ALTER TABLE schedules ADD COLUMN stop_on_failure INTEGER")
     except Exception:
         pass
+    # Application accounts. Separate from the X identity; see the auth helpers above.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            must_change_password INTEGER NOT NULL DEFAULT 1,
+            created_at REAL,
+            created_by TEXT,
+            last_login_at REAL
+        )
+    """)
+    # Records which application account created a schedule, so the read-across
+    # roles can see who scheduled what. Existing rows keep NULL.
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN app_user_id INTEGER")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN app_username TEXT")
+    except Exception:
+        pass
     c.execute("""
         CREATE TABLE IF NOT EXISTS tokens (
             x_user_id TEXT PRIMARY KEY,
@@ -203,6 +371,7 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_series_id ON schedules(series_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_tokens_x_user_id ON tokens(x_user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_app_user_id ON schedules(app_user_id)")
     conn.commit()
     conn.close()
 
@@ -226,17 +395,21 @@ def persist_schedule(rec: Dict[str, Any]):
     c = conn.cursor()
     c.execute("""
         INSERT OR REPLACE INTO schedules
-        (id, user_id, ads_account_id, card_id, card_type,
+        (id, user_id, app_user_id, app_username, ads_account_id, card_id, card_type,
          original_title, original_media_id, original_url, original_post_url,
          original_media_width, original_media_height, original_media_type,
          new_title, new_media_id, new_url, new_media_type,
          original_preview, new_preview,
          scheduled_at, status, result, executed_at, created_at,
          series_id, series_label, step, stop_on_failure)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         rec.get("id"),
         rec.get("user_id"),
+        # REPLACE rewrites the whole row, so ownership has to be carried through
+        # here or every status update would blank it out.
+        rec.get("app_user_id"),
+        rec.get("app_username"),
         rec.get("ads_account_id"),
         rec.get("card_id"),
         rec.get("card_type"),
@@ -319,6 +492,7 @@ def next_schedule_id() -> int:
 # Initialize DB tables + load any persisted schedules/tokens so that
 # background jobs (cron) can run after server restart.
 init_db()
+seed_bootstrap_admin()
 load_tokens_from_db()
 load_schedules_from_db()
 
@@ -1942,7 +2116,9 @@ app = FastAPI(title="Dynamic Media Card Tool", docs_url=None, redoc_url=None)
 # the cookie is present but expired/invalid, clear it so the browser returns to a clean
 # unauthenticated state. The auth-mutating endpoints manage their own cookie, so skip
 # them to avoid emitting conflicting Set-Cookie headers.
-_SESSION_COOKIE_SELF_MANAGED = {"/logout", "/callback"}
+# These routes set or delete the X session cookie themselves; the sliding refresh
+# below must not re-issue it from the (stale) request cookie and undo their work.
+_SESSION_COOKIE_SELF_MANAGED = {"/logout", "/callback", "/signin", "/signout"}
 
 @app.middleware("http")
 async def sliding_session_refresh(request: Request, call_next):
@@ -1962,9 +2138,48 @@ async def sliding_session_refresh(request: Request, call_next):
         response.delete_cookie("session", path="/")
     return response
 
-# Session cookie for the transient OAuth handshake state only. max_age=None makes it a
-# real session cookie (cleared on browser close); it must not outlive the browser or
-# contradict the idle policy above.
+# Everything except the sign-in page itself sits behind an application account.
+# Connecting X (/login, /callback) is gated too: you sign in here first, then attach
+# your own X account.
+_AUTH_PUBLIC_PATHS = {"/signin", "/health", "/favicon.ico"}
+_AUTH_PUBLIC_PREFIXES = ("/static",)
+# Reachable while a forced password change is outstanding, so the user can complete
+# it (or leave) without being bounced in a loop.
+_AUTH_PASSWORD_CHANGE_PATHS = {"/change-password", "/api/change-password", "/signout"}
+
+def current_app_user(request: Request) -> Optional[Dict[str, Any]]:
+    """The signed-in application account, resolved by the gate below."""
+    return getattr(request.state, "app_user", None)
+
+@app.middleware("http")
+async def app_auth_gate(request: Request, call_next):
+    path = request.url.path
+    if path in _AUTH_PUBLIC_PATHS or path.startswith(_AUTH_PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    uid = request.session.get("app_uid")
+    user = get_user_by_id(uid) if uid else None
+    if not user:
+        # Stale id (e.g. the account was deleted while signed in) — drop it.
+        request.session.pop("app_uid", None)
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Not signed in"}, status_code=401)
+        return RedirectResponse("/signin", status_code=303)
+
+    if user.get("must_change_password") and path not in _AUTH_PASSWORD_CHANGE_PATHS:
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Password change required"}, status_code=403)
+        return RedirectResponse("/change-password", status_code=303)
+
+    request.state.app_user = user
+    return await call_next(request)
+
+# Carries the signed-in application account (app_uid) plus transient OAuth handshake
+# state. max_age=None makes it a real session cookie (cleared on browser close).
+#
+# Added last on purpose: Starlette runs the most recently added middleware outermost,
+# so this wraps app_auth_gate above and request.session is populated by the time the
+# gate reads it. Moving this call earlier breaks the gate.
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
@@ -2054,10 +2269,13 @@ async def index(request: Request):
             # Load previous schedules for immediate display after login (light version with basic "changes").
             # No automatic client fetch on page load. The list is only refreshed on explicit user Refresh
             # or after the user performs a mutating action (save/cancel/run).
-            rows = conn.execute(
-                "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
-                (user["id"],)
-            ).fetchall()
+            if can_see_all_schedules(current_app_user(request)):
+                rows = conn.execute("SELECT * FROM schedules LIMIT 200").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
+                    (user["id"],)
+                ).fetchall()
             initial_schedules = [dict(r) for r in rows]
             # Attach basic changes so the "Will change / Changed" lines appear right away in the seeded list.
             def _light_changes(r):
@@ -2084,6 +2302,7 @@ async def index(request: Request):
             conn.close()
         except Exception:
             initial_schedules = []
+    app_user = current_app_user(request)
     return templates.TemplateResponse(
         "index.html",
         {
@@ -2092,6 +2311,10 @@ async def index(request: Request):
             "x_redirect_uri": X_REDIRECT_URI,
             "preferred_ads_account_id": preferred_ads_account_id,
             "initial_schedules": initial_schedules,
+            "app_user": app_user,
+            "app_role_label": ROLE_LABELS.get((app_user or {}).get("role"), ""),
+            "is_admin": can_manage_users(app_user),
+            "sees_all_schedules": can_see_all_schedules(app_user),
         },
     )
 
@@ -2323,10 +2546,250 @@ async def callback(
 @app.get("/logout")
 @app.post("/logout")
 async def logout(request: Request):
+    """Disconnect the X account but stay signed in to the tool.
+
+    Only the OAuth handshake keys are dropped; app_uid is preserved so the user
+    lands back on the page able to connect a different X account. Use /signout to
+    leave the tool entirely.
+    """
     resp = RedirectResponse("/")
+    clear_session_cookie(resp)
+    for key in ("oauth1_request_token", "oauth1_request_token_secret", "oauth_state", "pkce_verifier"):
+        request.session.pop(key, None)
+    return resp
+
+# --------------------------------------------------------------------------------------
+# Application sign-in (in front of the X connection)
+# --------------------------------------------------------------------------------------
+
+@app.get("/signin", response_class=HTMLResponse)
+async def signin_page(request: Request):
+    # Already signed in — skip the form.
+    uid = request.session.get("app_uid")
+    if uid and get_user_by_id(uid):
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse("signin.html", {"request": request, "error": None})
+
+@app.post("/signin", response_class=HTMLResponse)
+async def signin_submit(request: Request, username: str = Form(""), password: str = Form("")):
+    user = get_user_by_username(username)
+    # Verify even when the user is missing so a bad username and a bad password
+    # take the same time to answer, and neither can be told apart from the outside.
+    stored = user["password_hash"] if user else hash_password("placeholder-for-timing")
+    ok = verify_password(password, stored) and user is not None
+    if not ok:
+        return templates.TemplateResponse(
+            "signin.html",
+            {"request": request, "error": "Incorrect username or password."},
+            status_code=401,
+        )
+    # New session id on privilege change, so a pre-login cookie cannot be replayed.
+    request.session.clear()
+    request.session["app_uid"] = user["id"]
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (time.time(), user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    dest = "/change-password" if user.get("must_change_password") else "/"
+    resp = RedirectResponse(dest, status_code=303)
+    # The X connection lives in its own cookie, independent of the app session, so
+    # clearing the app session above would otherwise leave it behind: on a shared
+    # browser the next person to sign in would inherit the previous user's X account
+    # and could act on their Ads accounts. Each sign-in starts with X unattached.
+    clear_session_cookie(resp)
+    return resp
+
+@app.get("/signout")
+@app.post("/signout")
+async def signout(request: Request):
+    """Leave the tool completely: drops the app session and the X session cookie."""
+    resp = RedirectResponse("/signin", status_code=303)
     clear_session_cookie(resp)
     request.session.clear()
     return resp
+
+@app.get("/change-password", response_class=HTMLResponse)
+async def change_password_page(request: Request):
+    user = current_app_user(request)
+    return templates.TemplateResponse(
+        "change_password.html",
+        {"request": request, "app_user": user, "forced": bool(user and user.get("must_change_password"))},
+    )
+
+@app.post("/api/change-password")
+async def api_change_password(request: Request):
+    user = current_app_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    body = await request.json()
+    current = body.get("current_password") or ""
+    new = body.get("new_password") or ""
+    confirm = body.get("confirm_password") or ""
+
+    # A forced first-login change still requires the temporary password, so a
+    # shared terminal cannot be used to seize an account mid-setup.
+    if not verify_password(current, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if len(new) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail=f"New password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    if new != confirm:
+        raise HTTPException(status_code=400, detail="New passwords do not match.")
+    if new == current:
+        raise HTTPException(status_code=400, detail="New password must be different from the current one.")
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+            (hash_password(new), user["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+# --------------------------------------------------------------------------------------
+# Admin: user management
+# --------------------------------------------------------------------------------------
+
+def require_admin(request: Request) -> Dict[str, Any]:
+    user = current_app_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    if not can_manage_users(user):
+        raise HTTPException(status_code=403, detail="Admins only")
+    return user
+
+def _public_user(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Shape a user row for the admin table. Never includes the password hash."""
+    return {
+        "id": row.get("id"),
+        "username": row.get("username"),
+        "role": row.get("role"),
+        "role_label": ROLE_LABELS.get(row.get("role"), row.get("role")),
+        "must_change_password": bool(row.get("must_change_password")),
+        "created_at": row.get("created_at"),
+        "created_by": row.get("created_by"),
+        "last_login_at": row.get("last_login_at"),
+    }
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    user = current_app_user(request)
+    if not can_manage_users(user):
+        # Non-admins have no business here; send them to the tool rather than 403.
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "app_user": user,
+            "roles": [{"value": r, "label": ROLE_LABELS[r]} for r in ROLES],
+        },
+    )
+
+@app.get("/api/admin/users")
+async def api_list_users(request: Request):
+    require_admin(request)
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT * FROM users ORDER BY username COLLATE NOCASE").fetchall()
+    finally:
+        conn.close()
+    return {"users": [_public_user(dict(r)) for r in rows]}
+
+@app.post("/api/admin/users")
+async def api_create_user(request: Request):
+    admin = require_admin(request)
+    body = await request.json()
+    username = normalize_username(body.get("username") or "")
+    role = (body.get("role") or ROLE_USER).strip()
+
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+    if len(username) > 64:
+        raise HTTPException(status_code=400, detail="Username must be 64 characters or fewer.")
+    if not re.fullmatch(r"[A-Za-z0-9._@-]+", username):
+        raise HTTPException(status_code=400, detail="Username may only contain letters, numbers, and . _ - @")
+    if role not in ROLES:
+        raise HTTPException(status_code=400, detail="Unknown role.")
+    if get_user_by_username(username):
+        raise HTTPException(status_code=409, detail="That username is already taken.")
+
+    temp_password = generate_temp_password()
+    try:
+        created = create_app_user(username, temp_password, role, must_change=True, created_by=admin["username"])
+    except sqlite3.IntegrityError:
+        # Lost a race against a concurrent create of the same name.
+        raise HTTPException(status_code=409, detail="That username is already taken.")
+    # The temporary password is returned exactly once, here. It is stored only as a
+    # hash, so it cannot be shown again later — the admin resets it instead.
+    return {"user": _public_user(created), "temp_password": temp_password}
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+async def api_reset_user_password(user_id: int, request: Request):
+    require_admin(request)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    temp_password = generate_temp_password()
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
+            (hash_password(temp_password), user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"user": _public_user(get_user_by_id(user_id)), "temp_password": temp_password}
+
+@app.delete("/api/admin/users/{user_id}")
+async def api_delete_user(user_id: int, request: Request):
+    admin = require_admin(request)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if int(user_id) == int(admin["id"]):
+        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
+    # Never leave the tool with no way back in.
+    if target.get("role") == ROLE_ADMIN and count_admins(exclude_id=user_id) == 0:
+        raise HTTPException(status_code=400, detail="This is the last admin account — promote someone else first.")
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    # Schedules are keyed on the X account, not this one, so they keep running.
+    # app_user_id is left in place as a record of who created them.
+    return {"ok": True}
+
+@app.post("/api/admin/users/{user_id}/role")
+async def api_set_user_role(user_id: int, request: Request):
+    admin = require_admin(request)
+    body = await request.json()
+    role = (body.get("role") or "").strip()
+    if role not in ROLES:
+        raise HTTPException(status_code=400, detail="Unknown role.")
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if (
+        target.get("role") == ROLE_ADMIN
+        and role != ROLE_ADMIN
+        and count_admins(exclude_id=user_id) == 0
+    ):
+        raise HTTPException(status_code=400, detail="This is the last admin account — promote someone else first.")
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"user": _public_user(get_user_by_id(user_id))}
 
 # --------------------------------------------------------------------------------------
 # API
@@ -2890,7 +3353,7 @@ async def api_validate_url(request: Request, user: Dict[str, Any] = Depends(requ
     return {"valid": True}
 
 @app.post("/api/schedules")
-async def api_create_schedule(payload: ScheduleIn, user: Dict[str, Any] = Depends(require_user)):
+async def api_create_schedule(payload: ScheduleIn, request: Request, user: Dict[str, Any] = Depends(require_user)):
     if payload.scheduled_at <= time.time():
         raise HTTPException(422, detail="Scheduled time must be in the future.")
 
@@ -2953,8 +3416,11 @@ async def api_create_schedule(payload: ScheduleIn, user: Dict[str, Any] = Depend
             raise HTTPException(422, detail="New URL must be a valid http(s) URL.")
 
     now = time.time()
+    _app = current_app_user(request)
     rec = {
         "user_id": user["id"],
+        "app_user_id": (_app or {}).get("id"),
+        "app_username": (_app or {}).get("username"),
         "ads_account_id": payload.ads_account_id,
         "card_id": payload.card_id,
         "card_type": payload.card_type or "website",
@@ -2997,15 +3463,16 @@ async def api_create_schedule(payload: ScheduleIn, user: Dict[str, Any] = Depend
     c = conn.cursor()
     c.execute("""
         INSERT INTO schedules
-        (user_id, ads_account_id, card_id, card_type,
+        (user_id, app_user_id, app_username, ads_account_id, card_id, card_type,
          original_title, original_media_id, original_url, original_post_url,
          original_media_width, original_media_height, original_media_type,
          new_title, new_media_id, new_url, new_media_type,
          original_preview, new_preview,
          scheduled_at, status, result, executed_at, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        rec["user_id"], rec["ads_account_id"], rec["card_id"], rec["card_type"],
+        rec["user_id"], rec.get("app_user_id"), rec.get("app_username"),
+        rec["ads_account_id"], rec["card_id"], rec["card_type"],
         rec["original_title"], rec["original_media_id"], rec["original_url"], rec.get("original_post_url"),
         rec["original_media_width"], rec["original_media_height"], rec["original_media_type"],
         rec["new_title"], rec["new_media_id"], rec["new_url"], rec["new_media_type"],
@@ -3059,7 +3526,7 @@ def _cancel_remaining_series_steps(series_id: str, reason: str, exclude_sid: Opt
     return cancelled_ids
 
 @app.post("/api/schedules/series")
-async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depends(require_user)):
+async def api_create_series(payload: SeriesCreateIn, request: Request, user: Dict[str, Any] = Depends(require_user)):
     steps = payload.steps or []
     # Decision #5: no hard cap, but a series is 2+ steps (one-time uses the single flow).
     if len(steps) < 2:
@@ -3098,6 +3565,7 @@ async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depe
     is_app_card = "app" in (payload.card_type or "").strip().lower()
 
     # --- Validate + build EVERY step before inserting anything (atomic create) ---
+    _app_series = current_app_user(request)
     recs: List[Dict[str, Any]] = []
     for idx, s in enumerate(steps, start=1):
         new_mid = (s.new_media_id or "").strip()
@@ -3136,6 +3604,8 @@ async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depe
 
         rec = {
             "user_id": user["id"],
+            "app_user_id": (_app_series or {}).get("id"),
+            "app_username": (_app_series or {}).get("username"),
             "ads_account_id": payload.ads_account_id,
             "card_id": payload.card_id,
             "card_type": payload.card_type or "website",
@@ -3177,16 +3647,17 @@ async def api_create_series(payload: SeriesCreateIn, user: Dict[str, Any] = Depe
             rec["stop_on_failure"] = stop_flag
             c.execute("""
                 INSERT INTO schedules
-                (user_id, ads_account_id, card_id, card_type,
+                (user_id, app_user_id, app_username, ads_account_id, card_id, card_type,
                  original_title, original_media_id, original_url, original_post_url,
                  original_media_width, original_media_height, original_media_type,
                  new_title, new_media_id, new_url, new_media_type,
                  original_preview, new_preview,
                  scheduled_at, status, result, executed_at, created_at,
                  series_id, series_label, step, stop_on_failure)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                rec["user_id"], rec["ads_account_id"], rec["card_id"], rec["card_type"],
+                rec["user_id"], rec.get("app_user_id"), rec.get("app_username"),
+                rec["ads_account_id"], rec["card_id"], rec["card_type"],
                 rec["original_title"], rec["original_media_id"], rec["original_url"], rec.get("original_post_url"),
                 rec["original_media_width"], rec["original_media_height"], rec["original_media_type"],
                 rec["new_title"], rec["new_media_id"], rec["new_url"], rec["new_media_type"],
@@ -3220,23 +3691,30 @@ async def api_cancel_series(series_id: str, user: Dict[str, Any] = Depends(requi
     return {"ok": True, "cancelled": cancelled}
 
 @app.get("/api/schedules")
-async def api_list_schedules(user: Dict[str, Any] = Depends(require_user)):
+async def api_list_schedules(request: Request, user: Dict[str, Any] = Depends(require_user)):
+    # Admin, Strategist and CP/CAM get a read-across view of every schedule; a plain
+    # User only ever sees schedules made under their own X account.
+    see_all = can_see_all_schedules(current_app_user(request))
+
     # Primary source: in-memory SCHEDULES dict (always reflects current execution state, including
     # running/completed transitions that happen mid-flight before DB is synced).
     in_memory_ids: set = set()
     mine: list = []
     for sid, rec in list(SCHEDULES.items()):
-        if rec.get("user_id") == user["id"]:
+        if see_all or rec.get("user_id") == user["id"]:
             mine.append(dict(rec))  # shallow copy so enrichment doesn't mutate the live dict
             in_memory_ids.add(int(sid))
 
     # Fallback: add any DB rows not already covered (e.g. schedules loaded after a server restart
     # that haven't been touched in this process lifetime and therefore aren't in SCHEDULES yet).
     conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
-        (user["id"],)
-    ).fetchall()
+    if see_all:
+        rows = conn.execute("SELECT * FROM schedules LIMIT 200").fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
+            (user["id"],)
+        ).fetchall()
     conn.close()
     for row in rows:
         d = dict(row)
