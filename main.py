@@ -2570,19 +2570,65 @@ async def signin_page(request: Request):
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("signin.html", {"request": request, "error": None})
 
+# Failed sign-ins per username, held in memory. Fine with a single worker (see
+# render.yaml); a restart forgets them, which only ever unlocks early.
+SIGNIN_MAX_FAILURES = 5
+SIGNIN_LOCK_SECONDS = 15 * 60
+_SIGNIN_FAILURES: Dict[str, Dict[str, float]] = {}
+
+def _signin_key(username: str) -> str:
+    return normalize_username(username).lower()
+
+def signin_lock_remaining(username: str) -> int:
+    """Seconds left on a lock for this username, or 0 if it may try."""
+    entry = _SIGNIN_FAILURES.get(_signin_key(username))
+    if not entry:
+        return 0
+    return max(0, int(entry.get("locked_until", 0) - time.time()))
+
+def record_signin_failure(username: str) -> None:
+    now = time.time()
+    # Drop stale entries so guesses at made-up usernames cannot grow this forever.
+    if len(_SIGNIN_FAILURES) > 5000:
+        for k in [k for k, v in _SIGNIN_FAILURES.items()
+                  if now - v["first_at"] > SIGNIN_LOCK_SECONDS and v.get("locked_until", 0) < now]:
+            del _SIGNIN_FAILURES[k]
+    key = _signin_key(username)
+    entry = _SIGNIN_FAILURES.get(key)
+    if not entry or now - entry["first_at"] > SIGNIN_LOCK_SECONDS:
+        entry = {"count": 0, "first_at": now, "locked_until": 0}
+        _SIGNIN_FAILURES[key] = entry
+    entry["count"] += 1
+    if entry["count"] >= SIGNIN_MAX_FAILURES:
+        entry["locked_until"] = now + SIGNIN_LOCK_SECONDS
+
+def clear_signin_failures(username: str) -> None:
+    _SIGNIN_FAILURES.pop(_signin_key(username), None)
+
 @app.post("/signin", response_class=HTMLResponse)
 async def signin_submit(request: Request, username: str = Form(""), password: str = Form("")):
+    # Checked before the password, and applied to unknown usernames too, so a lock
+    # neither accepts a correct guess nor reveals whether the account exists.
+    if signin_lock_remaining(username):
+        return templates.TemplateResponse(
+            "signin.html",
+            {"request": request, "error": "Too many failed attempts. Wait 15 minutes and try again, or ask an admin to reset your password.",
+             "locked": True},
+            status_code=429,
+        )
     user = get_user_by_username(username)
     # Verify even when the user is missing so a bad username and a bad password
     # take the same time to answer, and neither can be told apart from the outside.
     stored = user["password_hash"] if user else hash_password("placeholder-for-timing")
     ok = verify_password(password, stored) and user is not None
     if not ok:
+        record_signin_failure(username)
         return templates.TemplateResponse(
             "signin.html",
             {"request": request, "error": "Incorrect username or password."},
             status_code=401,
         )
+    clear_signin_failures(username)
     # New session id on privilege change, so a pre-login cookie cannot be replayed.
     request.session.clear()
     request.session["app_uid"] = user["id"]
@@ -2654,6 +2700,20 @@ async def api_change_password(request: Request):
 # Admin: user management
 # --------------------------------------------------------------------------------------
 
+def _temp_password_from(body: Dict[str, Any]) -> str:
+    """The admin's typed temporary password, or a generated one when left blank."""
+    typed = body.get("temp_password")
+    if typed is None or str(typed) == "":
+        return generate_temp_password()
+    typed = str(typed)
+    if typed != typed.strip():
+        # Spaces at either end are invisible when the password is read out or pasted
+        # into a chat, so the user would type it without them and never get in.
+        raise HTTPException(status_code=400, detail="Temporary password cannot start or end with a space.")
+    if len(typed) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Temporary password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    return typed
+
 def require_admin(request: Request) -> Dict[str, Any]:
     user = current_app_user(request)
     if not user:
@@ -2718,7 +2778,7 @@ async def api_create_user(request: Request):
     if get_user_by_username(username):
         raise HTTPException(status_code=409, detail="That username is already taken.")
 
-    temp_password = generate_temp_password()
+    temp_password = _temp_password_from(body)
     try:
         created = create_app_user(username, temp_password, role, must_change=True, created_by=admin["username"])
     except sqlite3.IntegrityError:
@@ -2734,7 +2794,11 @@ async def api_reset_user_password(user_id: int, request: Request):
     target = get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found.")
-    temp_password = generate_temp_password()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    temp_password = _temp_password_from(body if isinstance(body, dict) else {})
     conn = get_db()
     try:
         conn.execute(
@@ -2744,6 +2808,8 @@ async def api_reset_user_password(user_id: int, request: Request):
         conn.commit()
     finally:
         conn.close()
+    # A reset is how an admin lets a locked-out user back in.
+    clear_signin_failures(target["username"])
     return {"user": _public_user(get_user_by_id(user_id)), "temp_password": temp_password}
 
 @app.delete("/api/admin/users/{user_id}")
