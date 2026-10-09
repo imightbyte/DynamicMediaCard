@@ -2710,8 +2710,9 @@ def _temp_password_from(body: Dict[str, Any]) -> str:
         # Spaces at either end are invisible when the password is read out or pasted
         # into a chat, so the user would type it without them and never get in.
         raise HTTPException(status_code=400, detail="Temporary password cannot start or end with a space.")
-    if len(typed) < MIN_PASSWORD_LENGTH:
-        raise HTTPException(status_code=400, detail=f"Temporary password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    # No minimum length: it only has to survive until first sign-in, where the user
+    # must replace it with one of at least MIN_PASSWORD_LENGTH, and repeated wrong
+    # guesses lock the username in the meantime.
     return typed
 
 def require_admin(request: Request) -> Dict[str, Any]:
