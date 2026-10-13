@@ -34,7 +34,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeSerializer
 from pydantic import BaseModel
@@ -742,8 +742,56 @@ async def x_get(url: str, access_token: str, params: Optional[Dict] = None, oaut
         r = await client.get(url, headers=headers, params=query_params)
         if r.status_code == 401:
             raise HTTPException(status_code=401, detail="X token expired or invalid")
-        r.raise_for_status()
+        if r.status_code >= 400:
+            # Surfaced as an HTTPException so callers can branch on the status;
+            # raise_for_status() escaped every handler and crashed the request.
+            raise HTTPException(status_code=r.status_code, detail=f"X API error (HTTP {r.status_code}): {_x_error_text(r)}")
         return r.json()
+
+class ValidateError(Exception):
+    """A post-validation failure the user can act on. `code` and `vars` let the page
+    show a translated message; `message` is the English text and the fallback."""
+    MESSAGES = {
+        "post_not_found": "This post could not be found. It may have been deleted, or the link may be wrong.",
+        "post_not_visible": "This post is from a protected account that the X account you connected cannot see.",
+        "post_no_card": "This post has no website card or app card attached, so there is nothing to schedule.",
+        "card_not_in_account": (
+            "The card on this post (posted by @{handle}) is not in ads account {account}. "
+            "A card can only be read and changed from the ads account that created it. "
+            "Choose that ads account, or connect an X account that has access to it."
+        ),
+        "ads_account_not_accessible": (
+            "Ads account {account} is not one of the ads accounts the X account you connected can use. "
+            "Check the account ID, or connect an X account that has access to it."
+        ),
+        "ads_account_unavailable": (
+            "Ads account {account} was not found, or the X account you connected cannot use it. "
+            "Check the account ID, or connect an X account that has access to it."
+        ),
+        "x_rate_limited": "X is limiting requests right now. Wait a minute and try again.",
+        "x_error": "X returned an error while checking this post (HTTP {http}). Please try again.",
+    }
+
+    def __init__(self, code: str, status: int = 422, **vars: Any):
+        self.code = code
+        self.status = status
+        self.vars = {k: ("" if v is None else str(v)) for k, v in vars.items()}
+        self.message = self.MESSAGES[code].format(**self.vars)
+        super().__init__(self.message)
+
+def _x_error_text(r: httpx.Response) -> str:
+    """The most useful line from an X or Ads API error body, kept short."""
+    try:
+        body = r.json()
+    except Exception:
+        return (r.text or "(no body)")[:300]
+    errs = body.get("errors") if isinstance(body, dict) else None
+    if isinstance(errs, list) and errs and isinstance(errs[0], dict):
+        e = errs[0]
+        return str(e.get("message") or e.get("detail") or e.get("title") or e.get("code") or e)[:300]
+    if isinstance(body, dict):
+        return str(body.get("detail") or body.get("title") or body)[:300]
+    return str(body)[:300]
 
 async def ads_get(path: str, access_token: str, params: Optional[Dict] = None, oauth_token_secret: Optional[str] = None) -> Dict[str, Any]:
     """Ads API calls — must use OAuth1 user context."""
@@ -767,7 +815,8 @@ async def ads_get(path: str, access_token: str, params: Optional[Dict] = None, o
             except Exception:
                 detail = r.text or r.content.decode(errors="ignore") or "(no body)"
             raise HTTPException(status_code=r.status_code, detail=f"Ads API error (HTTP {r.status_code} on {path}): {detail}")
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=f"Ads API error (HTTP {r.status_code} on {path}): {_x_error_text(r)}")
         return r.json()
 
 async def ads_put(path: str, access_token: str, payload: Dict[str, Any], oauth_token_secret: Optional[str] = None) -> Dict[str, Any]:
@@ -1186,17 +1235,26 @@ async def validate_tweet_has_card(access_token: str, tweet_id: str, oauth_token_
         data = await x_get(f"{X_TWEETS_URL}/{tweet_id}", access_token, params, oauth_token_secret=oauth_token_secret)
     except HTTPException as e:
         if e.status_code == 404:
-            raise HTTPException(422, detail="Post not found. It may have been deleted, is private, or the signed-in X account does not have access to it.")
-        raise
+            raise ValidateError("post_not_found")
+        if e.status_code == 403:
+            raise ValidateError("post_not_visible")
+        if e.status_code == 429:
+            raise ValidateError("x_rate_limited", status=429)
+        if e.status_code == 401:
+            raise
+        print(f"[validate] post lookup failed: {e.detail}")
+        raise ValidateError("x_error", status=502, http=e.status_code)
 
-    tweet = data.get("data", {})
+    tweet = data.get("data") or {}
+    if not tweet:
+        # X answers 200 with an "errors" list (and no data) for posts it will not show.
+        err = ((data.get("errors") or [{}])[0]) or {}
+        kind = f"{err.get('title') or ''} {err.get('type') or ''}".lower()
+        raise ValidateError("post_not_visible" if ("authoriz" in kind or "forbidden" in kind) else "post_not_found")
+
     card_uri = tweet.get("card_uri")
-
     if not card_uri or not str(card_uri).startswith("card://"):
-        raise HTTPException(
-            status_code=422,
-            detail="This post exists but does not contain a website card or app card"
-        )
+        raise ValidateError("post_no_card")
 
     card_id = str(card_uri).replace("card://", "")
     return {"tweet": tweet, "card_id": card_id, "raw": data}
@@ -2151,6 +2209,22 @@ async def execute_card_update(schedule: Dict[str, Any], force: bool = False):
 
 app = FastAPI(title="Dynamic Media Card Tool", docs_url=None, redoc_url=None)
 
+@app.exception_handler(ValidateError)
+async def _validate_error_handler(request: Request, exc: ValidateError):
+    return JSONResponse({"detail": exc.message, "code": exc.code, "vars": exc.vars}, status_code=exc.status)
+
+@app.exception_handler(Exception)
+async def _unhandled_error_handler(request: Request, exc: Exception):
+    # The page reads every /api/ reply as JSON; a plain-text 500 made it report a
+    # "network error" for what was really a server-side failure.
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"detail": "Something went wrong on the server. Please try again, and tell an admin if it keeps happening.",
+             "code": "server_error"},
+            status_code=500,
+        )
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
 # Sliding idle refresh: on every request that carries a still-valid "session" cookie,
 # re-issue it with a fresh last-seen timestamp so activity keeps the session alive. If
 # the cookie is present but expired/invalid, clear it so the browser returns to a clean
@@ -3051,6 +3125,32 @@ async def api_check_ads_account(ads_account_id: str, user: Dict[str, Any] = Depe
             "granted_scopes": granted_scopes
         }, status_code=200)
 
+async def usable_ads_account_ids(access: str, oauth_secret: str) -> Optional[set]:
+    """Lower-cased ids of every ads account this X login can use, or None when the full
+    list could not be read (so a missing id must not be taken as proof of no access)."""
+    ids: set = set()
+    cursor = None
+    try:
+        for _ in range(5):
+            params = {"count": 1000}
+            if cursor:
+                params["cursor"] = cursor
+            data = await ads_get("/accounts", access, params, oauth_token_secret=oauth_secret or None)
+            if not isinstance(data, dict) or data.get("errors"):
+                return None
+            for a in data.get("data") or []:
+                aid = (a.get("id") or a.get("account_id")) if isinstance(a, dict) else None
+                if aid:
+                    ids.add(str(aid).strip().lower())
+            cursor = data.get("next_cursor")
+            if not cursor:
+                return ids
+    except Exception as e:
+        print(f"[validate] could not list usable ads accounts: {e}")
+        return None
+    # Still more pages after the cap: the list is incomplete.
+    return None
+
 @app.post("/api/validate-post")
 async def api_validate_post(request: Request, user: Dict[str, Any] = Depends(require_user)):
     body = await request.json()
@@ -3090,17 +3190,18 @@ async def api_validate_post(request: Request, user: Dict[str, Any] = Depends(req
     try:
         await ads_get(f"/accounts/{ads_account_id}", access, oauth_token_secret=oauth_secret if oauth_secret else None)
     except HTTPException as e:
-        if e.status_code in (401, 403):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Step 1 passed (post exists and has a card). "
-                    f"However, cannot access Ads Account {ads_account_id} (HTTP {e.status_code}). "
-                    "Make sure you are signed in with an X account that has access to this Ads account, "
-                    "the App has the Ads API product enabled, and the Account ID is correct."
-                )
-            )
-        raise
+        print(f"[validate] ads account check failed: {e.detail}")
+        if e.status_code == 429:
+            raise ValidateError("x_rate_limited", status=429)
+        if e.status_code in (400, 401, 403, 404):
+            # X's status code does not reliably separate "no such account" from "not
+            # yours", so ask which accounts this X login can use instead.
+            usable = await usable_ads_account_ids(access, oauth_secret)
+            if usable is not None and ads_account_id.strip().lower() not in usable:
+                raise ValidateError("ads_account_not_accessible", account=ads_account_id)
+            if usable is None:
+                raise ValidateError("ads_account_unavailable", account=ads_account_id)
+        raise ValidateError("x_error", status=502, http=e.status_code)
 
     # =====================================================================
     # STEP 2: Get card details (Ads API)
@@ -3111,11 +3212,21 @@ async def api_validate_post(request: Request, user: Dict[str, Any] = Depends(req
     # Endpoint:
     #   GET https://ads-api.x.com/12/accounts/{account_id}/cards/{card_id}
     print(f"[validate] STEP 2 — fetching card details from Ads for card_id={card_id} ...")
-    raw_ads_card = await ads_get(
-        f"/accounts/{ads_account_id}/cards/{card_id}",
-        access,
-        oauth_token_secret=oauth_secret if oauth_secret else None,
-    )
+    try:
+        raw_ads_card = await ads_get(
+            f"/accounts/{ads_account_id}/cards/{card_id}",
+            access,
+            oauth_token_secret=oauth_secret if oauth_secret else None,
+        )
+    except HTTPException as e:
+        print(f"[validate] card lookup failed: {e.detail}")
+        # The account itself was reachable above, so a miss here means the card was
+        # created under a different ads account: typically another advertiser's post.
+        if e.status_code in (400, 403, 404):
+            raise ValidateError("card_not_in_account", handle=post_handle or "?", account=ads_account_id)
+        if e.status_code == 429:
+            raise ValidateError("x_rate_limited", status=429)
+        raise ValidateError("x_error", status=502, http=e.status_code)
     print(f"[validate] STEP 2 response received (top-level keys): {list(raw_ads_card.keys()) if isinstance(raw_ads_card, dict) else type(raw_ads_card)}")
 
     card = parse_card_response(raw_ads_card)

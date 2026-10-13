@@ -1,5 +1,5 @@
 <!--
-  Client-side UI localization (English / Korean / Japanese).
+  Client-side UI localization (English / Korean / Japanese / Simplified Chinese).
 
   Scope: presentation only. This layer never changes app flow, request payloads,
   validation rules, or anything sent to the X Ads API - it only swaps the text a
@@ -22,13 +22,16 @@
   ko 웹사이트 카드・헤드라인・웹사이트 URL) rather than literal word-for-word translation.
   Field labels follow the wording advertisers see in X Ads Manager rather than
   the descriptive phrasing used in X's help articles (ja 見出し, ko 제목).
+  zh follows X's current zh-cn pages: 帖子 (not the pre-rebrand 推文), 广告账号,
+  网站卡片 / 应用卡片, 标题, 媒体库, 登录 / 登出. The privacy page has no zh
+  version on x.com, so that link deliberately stays on the English page.
 -->
 <script>
 (function () {
   'use strict';
 
   var DEFAULT_LANG = 'en';
-  var SUPPORTED = ['en', 'ko', 'ja'];
+  var SUPPORTED = ['en', 'ko', 'ja', 'zh'];
   var STORAGE_KEY = 'dmc_ui_lang';
 
   // ---------------------------------------------------------------------------
@@ -165,6 +168,9 @@
       // --- current card ---
       'card.title': '현재 카드 (수정 불가)',
       'card.badge': '카드',
+      'card.typeWebsite': '웹사이트 카드',
+      'card.typeApp': '앱 카드',
+      'card.appNote': '앱 카드: X에는 미디어만 표시되므로 변경할 헤드라인이나 웹사이트 URL이 없습니다.',
       'card.idLabel': '카드 ID (게시물 기준):',
       'card.fieldTitle': '헤드라인',
       'card.fieldMediaKey': '미디어 키',
@@ -331,6 +337,17 @@
       'msg.validationFailed': '확인에 실패했습니다.',
       'msg.cardLoaded': '카드를 불러왔습니다. 이제 업데이트를 예약할 수 있습니다.',
       'msg.validateNetErr': '게시물을 확인하는 중 네트워크 오류가 발생했습니다.',
+      'msg.validateServerErr': '서버에서 이 게시물을 확인하지 못했습니다(HTTP {status}). 다시 시도해 주세요.',
+      'msg.validateShowErr': '카드는 찾았지만 페이지에 표시하지 못했습니다. 페이지를 새로고침한 후 다시 시도해 주세요.',
+      'verr.post_not_found': '게시물을 찾을 수 없습니다. 삭제되었거나 링크가 잘못되었을 수 있습니다.',
+      'verr.post_not_visible': '연결한 X 계정으로는 볼 수 없는 비공개 계정의 게시물입니다.',
+      'verr.post_no_card': '이 게시물에는 웹사이트 카드나 앱 카드가 없어 예약할 항목이 없습니다.',
+      'verr.card_not_in_account': '이 게시물의 카드(@{handle} 게시)는 광고 계정 {account}에 없습니다. 카드는 해당 카드를 만든 광고 계정에서만 조회하고 변경할 수 있습니다. 그 광고 계정을 선택하거나, 해당 계정에 접근 권한이 있는 X 계정을 연결하세요.',
+      'verr.ads_account_not_accessible': '광고 계정 {account}은(는) 연결한 X 계정이 사용할 수 있는 광고 계정이 아닙니다. 계정 ID를 확인하거나, 해당 계정에 접근 권한이 있는 X 계정을 연결하세요.',
+      'verr.ads_account_unavailable': '광고 계정 {account}을(를) 찾을 수 없거나, 연결한 X 계정으로 사용할 수 없습니다. 계정 ID를 확인하거나, 해당 계정에 접근 권한이 있는 X 계정을 연결하세요.',
+      'verr.x_rate_limited': '현재 X에서 요청을 제한하고 있습니다. 잠시 후 다시 시도해 주세요.',
+      'verr.x_error': '게시물을 확인하는 중 X에서 오류가 발생했습니다(HTTP {http}). 다시 시도해 주세요.',
+      'verr.server_error': '서버에서 문제가 발생했습니다. 다시 시도해 주시고, 계속 발생하면 관리자에게 알려 주세요.',
       'msg.adsApiError': 'X Ads API 오류 (위 세부 정보 참조)',
       'msg.enterKeyThenCheck': '미디어 키를 입력한 뒤 확인을 클릭하면 세부 정보가 표시됩니다.',
       'msg.adsFirstThenCheck': '먼저 X Ads 계정 ID를 입력하거나 선택한 뒤 확인을 클릭하세요.',
@@ -536,6 +553,9 @@
       // --- current card ---
       'card.title': '現在のカード（編集不可）',
       'card.badge': 'カード',
+      'card.typeWebsite': 'ウェブサイトカード',
+      'card.typeApp': 'アプリカード',
+      'card.appNote': 'アプリカード：Xにはメディアのみが表示されるため、変更できるヘッドラインやリンク先URLはありません。',
       'card.idLabel': 'カードID（ポストから取得）:',
       'card.fieldTitle': 'ヘッドライン',
       'card.fieldMediaKey': 'メディアキー',
@@ -702,6 +722,17 @@
       'msg.validationFailed': '確認に失敗しました。',
       'msg.cardLoaded': 'カードを読み込みました。更新を予約できます。',
       'msg.validateNetErr': '投稿の確認中にネットワークエラーが発生しました。',
+      'msg.validateServerErr': 'サーバーでこの投稿を確認できませんでした（HTTP {status}）。もう一度お試しください。',
+      'msg.validateShowErr': 'カードは見つかりましたが、ページに表示できませんでした。ページを再読み込みしてもう一度お試しください。',
+      'verr.post_not_found': '投稿が見つかりません。削除されたか、リンクが間違っている可能性があります。',
+      'verr.post_not_visible': '連携しているXアカウントでは表示できない、非公開アカウントの投稿です。',
+      'verr.post_no_card': 'この投稿にはウェブサイトカードもアプリカードも付いていないため、予約できる項目がありません。',
+      'verr.card_not_in_account': 'この投稿のカード（@{handle} の投稿）は広告アカウント {account} にありません。カードは、そのカードを作成した広告アカウントからのみ確認・変更できます。その広告アカウントを選択するか、そのアカウントへのアクセス権があるXアカウントを連携してください。',
+      'verr.ads_account_not_accessible': '広告アカウント {account} は、連携しているXアカウントで使用できる広告アカウントではありません。アカウントIDを確認するか、そのアカウントへのアクセス権があるXアカウントを連携してください。',
+      'verr.ads_account_unavailable': '広告アカウント {account} が見つからないか、連携しているXアカウントでは使用できません。アカウントIDを確認するか、そのアカウントへのアクセス権があるXアカウントを連携してください。',
+      'verr.x_rate_limited': '現在Xがリクエストを制限しています。少し待ってからもう一度お試しください。',
+      'verr.x_error': '投稿の確認中にXでエラーが発生しました（HTTP {http}）。もう一度お試しください。',
+      'verr.server_error': 'サーバーで問題が発生しました。もう一度お試しいただき、解決しない場合は管理者にお知らせください。',
       'msg.adsApiError': 'X Ads API エラー（詳細は上記を参照）',
       'msg.enterKeyThenCheck': 'メディアキーを入力して「確認」をクリックすると詳細が表示されます。',
       'msg.adsFirstThenCheck': '先に X Ads アカウントIDを入力または選択してから「確認」をクリックしてください。',
@@ -774,6 +805,380 @@
       'footer.dataFlow': 'データの取り扱い',
       'footer.dataFlowBody': 'Dynamic Media Card Tool は、認証されたアカウントを使用して X API v2 および X Ads API 経由でカードを更新します。本アプリを利用することで、ここにリンクされている X の規約およびプライバシーポリシーに同意したものとみなされます。本アプリは、X への更新の予約・送信に必要な範囲を超えてカードの内容を保持しません。',
       'footer.takedown': 'プロモーションコンテンツに関する削除依頼やコンテンツについてのお問い合わせは、担当の X CAM／セールス担当者までご連絡ください。'
+    },
+
+    zh: {
+      // --- nav ---
+      'nav.updateCard': '更新卡片',
+      'nav.schedules': '定时列表',
+      'nav.signedInAs': '当前登录',
+      'nav.signOut': '登出',
+      'nav.signIn': '使用 X 登录',
+      'nav.language': '语言',
+      'nav.disconnectX': '断开 X 连接',
+      'nav.admin': '管理',
+      'nav.appSignOut': '登出',
+
+      // --- sign-in / password ---
+      'auth.appName': 'Dynamic Media Card Tool',
+      'auth.signInSubtitle': '请登录以继续。',
+      'auth.username': '用户名',
+      'auth.password': '密码',
+      'auth.signIn': '登录',
+      'auth.badCredentials': '用户名或密码不正确。',
+      'auth.locked': '登录尝试次数过多。请在 15 分钟后重试，或请管理员重置你的密码。',
+      'auth.needAccount': '需要账号？请联系管理员为你创建。',
+      'auth.changeTitle': '更改密码',
+      'auth.changeForced': '请先设置新密码再继续。',
+      'auth.changeOptional': '为此账号设置新密码。',
+      'auth.currentPassword': '当前密码',
+      'auth.newPassword': '新密码',
+      'auth.confirmPassword': '确认新密码',
+      'auth.passwordRule': '至少 8 个字符。',
+      'auth.updatePassword': '更改密码',
+      'auth.backToTool': '返回工具',
+      'auth.changed': '密码已更改，正在返回工具…',
+      'auth.errMismatch': '两次输入的新密码不一致。',
+      'auth.errGeneric': '无法更改密码。',
+      'auth.errNetwork': '网络错误，请重试。',
+
+      // --- admin: user management ---
+      'admin.title': '用户管理',
+      'admin.subtitle': '创建账号并分配角色。新用户首次登录时需自行设置密码。',
+      'admin.backToTool': '返回工具',
+      'admin.addUser': '添加用户',
+      'admin.username': '用户名',
+      'admin.role': '角色',
+      'admin.create': '创建',
+      'admin.roleHelp': '管理员可以管理用户并查看所有定时更新。Strategist 和 CP/CAM 可以查看所有定时更新，但不能管理用户。普通用户只能查看自己的定时更新。',
+      'admin.tempPasswordFor': '以下用户的临时密码',
+      'admin.copy': '复制',
+      'admin.copied': '已复制',
+      'admin.tempPasswordOnce': '仅显示一次。请立即复制并发送给该用户。之后无法再次查看，只能重置。',
+      'admin.users': '用户',
+      'admin.refresh': '刷新',
+      'admin.colUser': '用户',
+      'admin.colRole': '角色',
+      'admin.colStatus': '状态',
+      'admin.colActions': '操作',
+      'admin.loading': '正在加载…',
+      'admin.noUsers': '还没有用户。',
+      'admin.loadFailed': '无法加载用户。',
+      'admin.pendingFirstSignIn': '等待首次登录',
+      'admin.active': '已启用',
+      'admin.you': '你',
+      'admin.resetPassword': '重置密码',
+      'admin.delete': '删除',
+      'admin.promptReset': '输入新的临时密码，留空则自动生成。原密码将立即失效。',
+      'admin.tempPassword': '临时密码',
+      'admin.tempPasswordPlaceholder': '留空则自动生成',
+      'admin.tempPasswordHelp': '请为每个人使用不同的密码。用户首次登录时必须更改密码。',
+      'admin.confirmDelete': '要删除 {name} 吗？此操作无法撤销。',
+      'admin.errNoUsername': '请输入用户名。',
+      'admin.errCreate': '无法创建用户。',
+      'admin.errReset': '无法重置密码。',
+      'admin.errDelete': '无法删除用户。',
+      'admin.errRole': '无法更改角色。',
+      'admin.errNetwork': '网络错误，请重试。',
+
+      // --- signed-out hero ---
+      'hero.badge': '仅限 X',
+      'hero.title': 'Dynamic Media Card Tool',
+      'hero.subtitle': '在你安排的时间更新 X 网站卡片和应用卡片。<br>请使用下方按钮登录 — 本工具<span class="font-medium">仅支持 X 登录</span>。',
+      'hero.preflightTitle': '点击“使用 X 登录”之前：',
+      'hero.preflightBody': '请在同一浏览器中打开 x.com，并登录（或切换到）拥有你要更改媒体的帖子的 X 账号。',
+      'hero.signIn': '使用 X 登录',
+      'hero.requires': '需要一个可以访问 X 广告的 X 账号。',
+
+      // --- oauth error panel ---
+      'oauth.title': 'X 登录未完成',
+      'oauth.commonFix': '出现“To use this App you have to be logged in to X.”时最常见的解决方法：',
+      'oauth.fix1html': '使用在 developer.x.com 创建应用/项目的<strong>同一个 X 账号</strong>登录。',
+      'oauth.fix2': '在开发者平台中：项目 → 应用 → User authentication settings → 确认已开启 OAuth 1.0a（如果使用旧版流程，还需开启 OAuth 2.0）。',
+      'oauth.fix3html': '<span class="font-mono text-foreground">原样</span>添加下方回调 URI（请直接复制）：',
+      'oauth.fix4html': '然后在 <span class="font-mono">.env</span> 中将 <span class="font-mono">X_REDIRECT_URI</span> 设为相同的值，并重启服务器。',
+      'oauth.fix5html': '同时确认项目/应用已启用 Ads API。在本地请使用 <span class="font-mono">127.0.0.1</span>，而不是 <span class="font-mono">localhost</span>。',
+      'oauth.profileTitle': 'OAuth1 登录后获取个人资料失败。',
+      'oauth.profileBody': '使用 Consumer Key 和 X 返回的令牌签名的个人资料请求被拒绝，错误为“Bad Authentication data”。',
+      'oauth.profileCheck': '请检查：',
+      'oauth.profile1html': '应用已<strong>启用</strong> OAuth 1.0a（与 OAuth 2.0 是分开设置的）。',
+      'oauth.profile2html': '准确的<span class="font-mono">回调 URL</span> 已添加在 <strong>OAuth 1.0a</strong> 设置中。',
+      'oauth.profile3html': '复制的是 <strong>Consumer Keys</strong>（API Key + Secret），而不是 OAuth 2.0 的 Client ID/Secret。',
+      'oauth.profile4': '应用权限设为“Read and write”。',
+      'oauth.profile5': '在 developer.x.com 更改设置后，请等待约 30 秒，完全重启服务器，强制刷新页面，然后重新登录。',
+
+      // --- ads account ---
+      'ads.title': 'X 广告账号',
+      'ads.accountId': '账号 ID',
+      'ads.findAt': '— 查看位置：',
+      'ads.findAtTail': '→ 账号设置',
+      'ads.detecting': '正在检测…',
+      'ads.placeholder': '例如：abc123def',
+      'ads.detected': '已检测到的账号',
+      'ads.reload': '重新加载',
+      'ads.noneDetectedHtml': '未能通过 Ads API 或以往的定时更新检测到此 X 用户的广告账号。你也可以在上方直接粘贴广告账号 ID。查看位置：<a href="https://ads.x.com" target="_blank" class="underline">ads.x.com</a> → 账号设置。',
+      'ads.seeError': '请查看下方错误。你也可以直接粘贴广告账号 ID。',
+      'ads.loadFailed': '无法加载账号：',
+      'ads.loadFailedTail': '。你也可以直接粘贴 ID。',
+      'ads.badgeActive': '✓ 已启用',
+      'ads.badgeRequired': '必填',
+      'ads.authError': '身份验证错误',
+      'ads.authErrorTail': ' — 请尝试登出 X 后重新登录。',
+      'ads.loadAccountsFailed': '无法加载账号',
+
+      // --- load post ---
+      'post.title': '输入带有网站卡片或应用卡片的帖子链接',
+      'post.signedInVia': '已通过 X 登录：',
+      'post.signOutRestart': '登出并重新开始',
+      'post.noServerUser': '（此页面未包含服务器端用户信息）',
+      'post.urlLabel': 'X 帖子 URL',
+      'post.urlHelp': '粘贴使用网站卡片或应用卡片的帖子链接，然后点击按钮或按 Enter 键。',
+      'post.validate': '验证帖子并加载卡片',
+      'post.setAdsFirst': '请先在上方设置 X 广告账号 ID。',
+
+      // --- current card ---
+      'card.title': '当前卡片（只读）',
+      'card.badge': '卡片',
+      'card.typeWebsite': '网站卡片',
+      'card.typeApp': '应用卡片',
+      'card.appNote': '应用卡片：X 只显示媒体，因此没有可更改的标题或网站 URL。',
+      'card.idLabel': '卡片 ID（来自帖子）：',
+      'card.fieldTitle': '标题',
+      'card.fieldMediaKey': '媒体键',
+      'card.fieldType': '类型：',
+      'card.fieldUrl': '网站 URL',
+      'card.mediaPreview': '媒体预览',
+      'card.readNote': '这些值读取自实际卡片（无法获取广告信息时读取自帖子）。你可以在下方安排新的值。',
+
+      // --- schedule form ---
+      'form.title': '安排更新',
+      'form.tabOnetime': '单次更新',
+      'form.tabSeries': '系列更新',
+      'form.tabCaptionOnetimeName': '单次更新',
+      'form.tabCaptionOnetimeDesc': ' — 只执行一次的定时更新。',
+      'form.tabCaptionSeriesName': '系列更新',
+      'form.tabCaptionSeriesDesc': ' — 为同一张卡片安排多个更新，按顺序执行。',
+      'form.newTitle': '新标题',
+      'form.newMediaKey': '新媒体键',
+      'form.mediaPlaceholder': '例如：3_1234567890123456789',
+      'form.selectMedia': '选择新媒体',
+      'form.selectMediaTitle': '浏览媒体库或上传新文件',
+      'form.mediaHelp': '点击“选择新媒体”，从媒体库中选择（仅显示与原卡片相同的媒体类型）或上传文件。类型、宽高比和预览会自动填写。',
+      'form.newUrl': '新网站 URL',
+      'form.scheduledTime': '定时时间（必须是将来的时间）',
+      'form.date': '日期',
+      'form.time24': '时间（24 小时制）',
+      'form.pastWarning': '定时时间必须是将来的时间。',
+      'form.timezone': '时区',
+      'form.save': '保存定时',
+      'form.saving': '正在保存…',
+      'form.saveNote': '更新将在安排的时间生效。',
+
+      // --- series builder ---
+      'series.label': '系列名称（标签）',
+      'series.labelPlaceholder': '例如：倒计时 1',
+      'series.timezone': '时区（所有步骤通用）',
+      'series.stopOnFailure': '任一更新失败时停止其余更新（取消勾选则其余步骤继续执行）',
+      'series.addStep': '+ 添加步骤',
+      'series.create': '创建系列',
+      'series.createNote': '每个更新都会在各自安排的时间应用到同一张卡片。',
+      'series.remove': '删除',
+      'series.minSteps': '一个系列至少需要 2 个步骤。',
+      'series.updateN': '更新 #{n}',
+      'series.newMediaLabel': '新媒体（与原卡片相同的{type}）',
+      'series.noNewMedia': '未选择新媒体（保留原{type}）。',
+      'series.selectMedia': '选择媒体',
+      'series.clear': '清除',
+      'series.errLoadCard': '请先加载卡片并选择 X 广告账号 ID（单次更新标签页）。',
+      'series.errStepDateTime': '步骤 {n}：请选择日期和时间。',
+      'series.errStepFuture': '步骤 {n}：定时时间必须是将来的时间。',
+      'series.errStepUrl': '步骤 {n}：请输入有效的 http(s) 网站 URL。',
+      'series.errTypeMismatch': '步骤 {n}：媒体类型不一致（原卡片为{orig}，所选为{sel}）。',
+      'series.errDupTimes': '各步骤不能使用相同的时间（不可重复）。',
+      'series.errOrder': '各步骤必须按时间先后顺序排列。',
+      'series.creating': '正在创建系列…',
+      'series.createFailed': '无法创建系列。',
+      'series.createFailedToast': '无法创建系列。',
+      'series.created': '系列已创建。',
+      'series.createdToast': '系列已创建。更新将在各自安排的时间执行。',
+      'series.createNetErr': '创建系列时出现网络错误。',
+
+      // --- schedules list ---
+      'list.title': '已安排的更新',
+      'list.refresh': '刷新',
+      'list.filterAccount': '广告账号',
+      'list.filterHandle': 'X 用户名',
+      'list.allAccounts': '所有广告账号',
+      'list.allHandles': '所有 X 用户名',
+      'list.clearFilters': '清除筛选',
+      'list.noMatch': '没有符合筛选条件的定时更新。',
+      'list.showing': '第 {from}–{to} 项，共 {total} 项',
+      'list.prevPage': '上一页',
+      'list.nextPage': '下一页',
+      'list.empty': '还没有定时更新。请在上方加载卡片，创建你的第一个定时更新。',
+      'list.footnote': '定时更新会在指定时间由服务器执行（APScheduler）。“立即执行”仅用于测试。',
+      'list.step': '步骤 {n}',
+      'list.card': '卡片：',
+      'list.post': '帖子：',
+      'list.scheduled': '定时时间（当地时间）：',
+      'list.executed': '执行时间：',
+      'list.willChange': '将更改：',
+      'list.changed': '已更改：',
+      'list.fTitle': '标题：',
+      'list.fMediaKey': '媒体键：',
+      'list.fUrl': 'URL：',
+      'list.mediaPreviews': '媒体预览：',
+      'list.tagOneTime': '单次',
+      'list.tagSeries': '系列更新',
+      'list.ofDone': '已完成 {done}/{total}',
+      'list.next': '下一次：',
+      'list.untitledSeries': '未命名系列',
+      'list.cancel': '取消',
+      'list.runNow': '立即执行',
+      'list.cancelSeries': '取消系列',
+      'list.cardUpdated': '卡片已更新。',
+      'list.cardUpdatedPost': '卡片已更新。帖子：',
+      // statuses
+      'status.pending': '待执行',
+      'status.running': '执行中',
+      'status.completed': '已完成',
+      'status.failed': '失败',
+      'status.cancelled': '已取消',
+      // series progress breakdown
+      'bd.done': '已完成 {n} 个',
+      'bd.pending': '待执行 {n} 个',
+      'bd.running': '执行中 {n} 个',
+      'bd.failed': '失败 {n} 个',
+      'bd.cancelled': '已取消 {n} 个',
+      // countdown
+      'cd.dueNow': '即将执行',
+      'cd.days': '{d} 天 {h} 小时后',
+      'cd.hours': '{h} 小时 {m} 分钟后',
+      'cd.minutes': '{m} 分钟后',
+
+      // --- confirm modal ---
+      'confirm.defaultTitle': '要继续吗？',
+      'confirm.defaultAccept': '确定',
+      'confirm.defaultDismiss': '返回',
+      'confirm.cancelSeriesTitle': '要取消此系列中所有待执行的更新吗？',
+      'confirm.cancelSeriesMsg': '此系列中所有待执行的更新都将被取消。',
+      'confirm.cancelSeriesAccept': '取消系列',
+      'confirm.cancelSeriesDismiss': '保留',
+      'confirm.cancelOneTitle': '要取消此定时更新吗？',
+      'confirm.cancelOneMsg': '该更新将不会执行。此操作无法撤销。',
+      'confirm.cancelOneAccept': '取消更新',
+      'confirm.cancelOneDismiss': '保留',
+      'confirm.runNowTitle': '要立即执行此更新吗？',
+      'confirm.runNowMsg': '将立即执行更新，而不是等到安排的时间。',
+      'confirm.runNowAccept': '立即执行',
+      'confirm.runNowDismiss': '暂不执行',
+      'confirm.runNowTest': '要立即执行此更新吗？（仅用于测试）',
+      'confirm.runNowShort': '要立即执行吗？',
+
+      // --- media picker ---
+      'picker.title': '选择新媒体',
+      'picker.showing': '正在显示与原卡片相同的{type}媒体',
+      'picker.close': '关闭',
+      'picker.tabBrowse': '从媒体库选择',
+      'picker.tabUpload': '上传',
+      'picker.searchPlaceholder': '搜索媒体…',
+      'picker.search': '搜索',
+      'picker.loading': '正在加载媒体…',
+      'picker.empty': '未找到媒体。',
+      'picker.untitled': '（无标题）',
+      'picker.loadingMore': '正在加载…',
+      'picker.loadMore': '加载更多',
+      'picker.uploadLabel': '上传新的{type}文件',
+      'picker.adsRequired': '需要 X 广告账号 ID。',
+      'picker.loadLibFailed': '无法加载媒体库。',
+      'picker.loadLibNetErr': '加载媒体库时出现网络错误。',
+      'picker.typeMismatch': '所选媒体为{type}。请选择{want}以与原卡片一致。',
+      'picker.differentType': '其他类型',
+      'picker.stillProcessing': '该媒体仍在处理中。请选择其他媒体，或稍后再试。',
+      'picker.adsRequiredUpload': '上传需要 X 广告账号 ID。',
+      'picker.uploading': '正在上传…',
+      'picker.uploadingPct': '正在上传… {pct}%',
+      'picker.uploadFailed': '上传失败。',
+      'picker.processing': '正在处理媒体…',
+      'picker.done': '完成。',
+      'picker.uploadNetErr': '上传时出现网络错误。',
+      'picker.processFailed': '媒体处理失败。',
+      'picker.processTimeout': '等待媒体处理完成时超时。',
+
+      // --- toasts / inline status ---
+      'msg.pasteUrl': '请输入 X 帖子 URL。',
+      'msg.adsRequired': '请先输入或选择 X 广告账号 ID。',
+      'msg.adsRequiredShort': '需要 X 广告账号 ID。',
+      'msg.adsRequiredMedia': '查找媒体需要 X 广告账号 ID。',
+      'msg.noCardLoaded': '尚未加载卡片。请先验证帖子。',
+      'msg.mediaKeyRequired': '需要新媒体键。',
+      'msg.enterMediaKey': '请先输入媒体键。',
+      'msg.noMediaKeyReturned': '无法获取所选媒体的媒体键。',
+      'msg.timeMustBeFuture': '定时时间必须是将来的时间。',
+      'msg.scheduleSaved': '定时已保存。',
+      'msg.scheduleSavedRun': '定时已保存，将在指定时间执行。',
+      'msg.saveFailed': '保存失败。',
+      'msg.mediaInfoFailed': '无法加载媒体信息。',
+      'msg.seriesCancelFailed': '无法取消系列。',
+      'msg.runNowPrefix': '立即执行：',
+      'msg.mediaLoadFailed': '无法加载媒体详情。',
+      'msg.mediaInfoNetErr': '加载媒体信息时出现网络错误。',
+      'msg.saveSchedulePrefix': '保存定时：',
+      'msg.saving': '正在保存…',
+      'msg.saveNetErr': '保存定时时出现网络错误。',
+      'msg.errSeeConsole': '出现错误，请查看控制台',
+      'msg.methodMissing': '找不到方法',
+      'msg.validationFailed': '验证失败。',
+      'msg.cardLoaded': '卡片已加载，现在可以安排更新了。',
+      'msg.validateNetErr': '验证帖子时出现网络错误。',
+      'msg.validateServerErr': '服务器无法验证此帖子（HTTP {status}）。请重试。',
+      'msg.validateShowErr': '已找到卡片，但无法在页面上显示。请刷新页面后重试。',
+      'verr.post_not_found': '找不到此帖子。帖子可能已被删除，或链接有误。',
+      'verr.post_not_visible': '此帖子来自受保护的账号，你连接的 X 账号无法查看。',
+      'verr.post_no_card': '此帖子没有附加网站卡片或应用卡片，因此没有可安排的内容。',
+      'verr.card_not_in_account': '此帖子上的卡片（由 @{handle} 发布）不在广告账号 {account} 中。卡片只能在创建它的广告账号中读取和更改。请选择该广告账号，或连接有权访问该账号的 X 账号。',
+      'verr.ads_account_not_accessible': '广告账号 {account} 不在你连接的 X 账号可使用的广告账号中。请检查账号 ID，或连接有权访问该账号的 X 账号。',
+      'verr.ads_account_unavailable': '找不到广告账号 {account}，或你连接的 X 账号无法使用该账号。请检查账号 ID，或连接有权访问该账号的 X 账号。',
+      'verr.x_rate_limited': 'X 目前正在限制请求。请稍等一分钟后重试。',
+      'verr.x_error': '检查此帖子时 X 返回了错误（HTTP {http}）。请重试。',
+      'verr.server_error': '服务器出现问题。请重试，如果问题持续存在，请告知管理员。',
+      'msg.adsApiError': 'X Ads API 错误（详情见上方）',
+      'msg.enterKeyThenCheck': '输入媒体键后点击“检查”即可查看详情。',
+      'msg.adsFirstThenCheck': '请先输入或选择 X 广告账号 ID，然后点击“检查”。',
+      'msg.mediaInfoFailedNet': '无法加载媒体信息（网络）。',
+      'msg.invalidUrl': 'URL 无效。',
+      'msg.loadCardAndAds': '请先加载卡片并选择 X 广告账号 ID。',
+      'msg.saveScheduleFailed': '无法保存定时。',
+      'msg.saveScheduleNetErr': '保存定时时出现网络错误。',
+      'msg.scheduleCancelled': '定时已取消。',
+      'msg.cancelFailed': '取消失败。',
+      'msg.runNowFailedPrefix': '立即执行失败：',
+      'msg.runNowSeeDetails': '请在列表中查看详情',
+      'msg.execStarted': '已开始执行，状态将自动更新。',
+      'msg.execFailedStart': '无法开始执行。',
+      'msg.execNetErr': '手动执行时出现网络错误。',
+      'msg.runNowFailedList': '立即执行失败（详情见列表）',
+      'msg.runNowNetErr': '立即执行时出现网络错误。',
+      // 403 guidance shown when the Ads API rejects the request.
+      'err403.title': 'X Ads API 返回的 403 错误通常表示：',
+      'err403.b1': '• 当前登录的 X 用户无权访问你输入的 X 广告账号 ID（针对此 App）；或',
+      'err403.b2': '• 你的 X 开发者项目中的 App 尚未启用/获批“Ads API”。',
+      'err403.next': '后续步骤：重新登录，然后在新标签页中打开 <b>{url}</b> 并粘贴返回的内容。同时，请在以同一 @用户登录的状态下，从 {adsUrl} 准确复制账号 ID。',
+
+      // --- footer ---
+      'footer.tos': '服务条款',
+      'footer.tosHref': 'https://x.com/zh-cn/tos',
+      'footer.privacy': '隐私政策',
+      'footer.devAgreement': '开发者协议和政策',
+      'footer.api': 'API',
+      'footer.adsTerms': '广告条款',
+      'footer.adsPolicies': '广告政策',
+      'footer.adsPoliciesHref': 'https://business.x.com/zh-cn/help/ads-policies',
+      'footer.nullcast': '仅限推广（Nullcast）帖子',
+      'footer.adsApi': 'Ads API',
+      'footer.dataFlow': '数据处理方式',
+      'footer.dataFlowBody': 'Dynamic Media Card Tool 使用你授权的账号，通过 X API v2 和 X Ads API 更新卡片。使用本应用即表示你同意此处链接的 X 条款和隐私政策。除安排更新并将其发送到 X 所需的范围外，本应用不会保存卡片内容。',
+      'footer.takedown': '如需对推广内容提出删除请求或咨询内容相关问题，请联系你的 X CAM/销售代表。'
     }
   };
 
@@ -784,6 +1189,7 @@
     l = String(l == null ? '' : l).toLowerCase().trim();
     if (l === 'kr' || l === 'ko-kr') l = 'ko';
     if (l === 'jp' || l === 'ja-jp') l = 'ja';
+    if (l === 'cn' || l === 'zh-cn' || l === 'zh-hans' || l === 'zh-hans-cn') l = 'zh';
     return SUPPORTED.indexOf(l) !== -1 ? l : DEFAULT_LANG;
   }
 
@@ -791,9 +1197,13 @@
   // falls back to English for anything unknown, which would make a typo look like a
   // deliberate request for English and overwrite the user's stored choice.
   var QUERY_LANGS = {
-    en: 'en', ko: 'ko', ja: 'ja',
-    kr: 'ko', jp: 'ja', 'ko-kr': 'ko', 'ja-jp': 'ja'
+    en: 'en', ko: 'ko', ja: 'ja', zh: 'zh',
+    kr: 'ko', jp: 'ja', 'ko-kr': 'ko', 'ja-jp': 'ja',
+    cn: 'zh', 'zh-cn': 'zh', 'zh-hans': 'zh', 'zh-hans-cn': 'zh'
   };
+
+  // BCP 47 tags for <html lang>, so fonts and screen readers pick the right script.
+  var HTML_LANG = { en: 'en-GB', ko: 'ko', ja: 'ja', zh: 'zh-Hans' };
 
   function langFromQuery() {
     try {
@@ -835,7 +1245,8 @@
   // surrounding sentence is translated. Unknown values pass through untouched.
   var MEDIA_TYPES = {
     ko: { image: '이미지', video: '동영상', gif: 'GIF' },
-    ja: { image: '画像', video: '動画', gif: 'GIF' }
+    ja: { image: '画像', video: '動画', gif: 'GIF' },
+    zh: { image: '图片', video: '视频', gif: 'GIF' }
   };
   function tMediaType(type) {
     var raw = String(type == null ? '' : type);
@@ -942,7 +1353,7 @@
     current = normalizeLang(lang);
     try { window.localStorage.setItem(STORAGE_KEY, current); } catch (e) {}
     try {
-      document.documentElement.setAttribute('lang', current === 'en' ? 'en-GB' : current);
+      document.documentElement.setAttribute('lang', HTML_LANG[current] || current);
     } catch (e) {}
     applyI18n(document.body);
     rerenderDynamic();
@@ -969,7 +1380,7 @@
   function boot() {
     initSelector();
     if (current !== DEFAULT_LANG) {
-      try { document.documentElement.setAttribute('lang', current); } catch (e) {}
+      try { document.documentElement.setAttribute('lang', HTML_LANG[current] || current); } catch (e) {}
       applyI18n(document.body);
       rerenderDynamic();
     }
