@@ -5,19 +5,19 @@
 {% block body %}
   <!-- Navigation (very close to reference) -->
   <nav class="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl">
-    <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
-      <div class="flex items-center gap-6">
-        <a href="/" class="font-bold text-lg tracking-tight flex items-center gap-2">
+    <div class="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4 whitespace-nowrap">
+      <div class="flex items-center gap-6 shrink-0">
+        <a href="/" class="font-bold text-lg tracking-tight flex items-center gap-2" aria-label="Dynamic Media Card Tool">
           <svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="currentColor">
             <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
           </svg>
-          Dynamic Media Card Tool
+          <span class="hidden lg:inline">Dynamic Media Card Tool</span>
         </a>
         <a href="#update" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="nav.updateCard">Update Card</a>
         <a href="#schedules" class="text-sm text-muted-foreground hover:text-foreground transition-colors" data-i18n="nav.schedules">Schedules</a>
       </div>
 
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 shrink-0">
         <!-- UI language selector. Presentation only: it swaps displayed text and
              persists the choice locally. English is the default. -->
         <select id="lang-select"
@@ -33,7 +33,7 @@
         <div x-data="userBanner({{ (user | tojson) if user else 'null' }})" x-init="init()" x-ignore class="flex items-center gap-3">
         {% if user %}
         <div class="flex items-center gap-2 text-sm">
-          <span class="text-muted-foreground" data-i18n="nav.signedInAs">Signed in as</span>
+          <span class="text-muted-foreground hidden lg:inline" data-i18n="nav.signedInAs">Signed in as</span>
           <strong>@{{ user.username }}</strong>
           <a href="/logout" class="text-xs text-primary hover:underline px-2 py-0.5" data-i18n="nav.disconnectX">Disconnect</a>
         </div>
@@ -59,7 +59,7 @@
     </div>
   </nav>
 
-  <main class="max-w-4xl mx-auto px-4 py-8" id="update">
+  <main class="max-w-6xl mx-auto px-4 py-8" id="update">
     <!-- Signed-out hero -->
     {# 
       Make the hero visible by default when the server knows there is no logged-in user.
