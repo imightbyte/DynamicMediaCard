@@ -27,6 +27,7 @@
           <option value="en">English</option>
           <option value="ko">한국어</option>
           <option value="ja">日本語</option>
+          <option value="zh">简体中文</option>
         </select>
 
         <div x-data="userBanner({{ (user | tojson) if user else 'null' }})" x-init="init()" x-ignore class="flex items-center gap-3">
@@ -307,8 +308,10 @@
             </svg>
             <span data-i18n="card.title">Current Card (uneditable)</span>
           </h2>
-          <span id="cc-type" class="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground">CARD</span>
+          <span id="cc-type" class="text-xs font-medium px-2.5 py-0.5 rounded-full border border-border text-muted-foreground">CARD</span>
         </div>
+        <div id="cc-type-note" class="text-[11px] text-muted-foreground -mt-2" style="display:none"
+             data-i18n="card.appNote">App card: X shows only the media, so there is no headline or destination URL to change.</div>
 
         <div class="text-[10px] text-muted-foreground mb-1" data-i18n="card.idLabel">Card ID (from post):</div>
         <div id="cc-id" class="font-mono text-xs break-all bg-background border border-border rounded px-2 py-1 mb-3">—</div>
@@ -1223,6 +1226,14 @@
     } // end proceedWithData
   }; // end window.saveSchedule
 
+  // Message for a failed /api/validate-post reply. `j` is the parsed body, or null when
+  // the server did not answer with JSON. Coded errors are shown in the page language.
+  window.validateErrorText = function (j, status) {
+    if (j && j.code) return window.tf('verr.' + j.code, String(j.detail || ''), j.vars || {});
+    if (j && j.detail) return j.detail;
+    return window.tf('msg.validateServerErr', 'The server could not check this post (HTTP {status}). Please try again.', { status: status });
+  };
+
   // === STANDALONE VALIDATE (completely bypasses Alpine for the critical "Validate Post" action) ===
   // This is the reliable entry point for the button and Enter key.
   window.doValidatePost = async function doValidatePost() {
@@ -1278,15 +1289,20 @@
     // Show spinner only during validation (no red progress text)
     if (errBox) { errBox.style.display = 'none'; errBox.textContent = ''; }
 
+    var gotReply = false;
     try {
       var r = await fetch('/api/validate-post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ post_url: pUrl, ads_account_id: accountId })
       });
-      var j = await r.json();
-      if (!r.ok) {
-        var detail = j.detail || window.t('msg.validationFailed', 'Validation failed.');
+      gotReply = true;
+      var j = null;
+      try { j = await r.json(); } catch (_) {}
+      if (!r.ok || !j) {
+        var detail = (j && typeof j.detail === 'object' && j.detail !== null)
+          ? j.detail
+          : window.validateErrorText(j, r.status);
         if (errBox) {
           errBox.style.display = 'block';
           errBox.innerHTML = '';   // clear transient message
@@ -1298,8 +1314,8 @@
           } else {
             errBox.textContent = String(detail);
           }
-          // Add actionable hint for the common 403 case
-          if (String(detail).includes('403') || String(detail).toLowerCase().includes('ads api error')) {
+          // Add actionable hint for the common 403 case. Coded errors already explain themselves.
+          if (!(j && j.code) && (String(detail).includes('403') || String(detail).toLowerCase().includes('ads api error'))) {
             var hint = document.createElement('div');
             hint.style.cssText = 'margin-top:8px; font-size:10px; color:#fda4af; border-top:1px solid #7f1d1d; padding-top:6px;';
             hint.innerHTML = window.t('err403.title', 'This 403 from the X Ads API usually means:') + '<br>' +
@@ -1419,15 +1435,26 @@
       setText('cc-url', card.url);
       setText('cc-id', card.id || card.card_id || '—');
 
-      var typeEl = document.getElementById('cc-type');
-      // card_type comes from the API and stays as-is; only the fallback is localized.
-      if (typeEl) typeEl.textContent = card.card_type ? card.card_type.toUpperCase() : window.t('card.badge', 'CARD');
-
       // App cards show only media on X (no title / destination URL). Hide those fields in
       // both the "Current Card" display and the one-time Schedule Update form. Detection uses a
       // substring test on the normalized card_type ("app" vs "website") so website cards keep
       // their editable Title / Destination URL (see parse_card_response in main.py).
       var isAppCard = String(card.card_type || '').toLowerCase().indexOf('app') !== -1;
+
+      var typeEl = document.getElementById('cc-type');
+      if (typeEl) {
+        var typeKey = !card.card_type ? 'card.badge' : (isAppCard ? 'card.typeApp' : 'card.typeWebsite');
+        var typeEn = !card.card_type ? 'CARD' : (isAppCard ? 'App card' : 'Website card');
+        // Tagged like static markup so a language switch relabels it.
+        typeEl.setAttribute('data-i18n', typeKey);
+        typeEl.setAttribute('data-i18n-src-text', typeEn);
+        typeEl.textContent = window.t(typeKey, typeEn);
+        typeEl.className = 'text-xs font-medium px-2.5 py-0.5 rounded-full border ' + (!card.card_type
+          ? 'border-border text-muted-foreground'
+          : (isAppCard ? 'border-purple-500/40 bg-purple-500/10 text-purple-300' : 'border-sky-500/40 bg-sky-500/10 text-sky-300'));
+      }
+      var typeNote = document.getElementById('cc-type-note');
+      if (typeNote) typeNote.style.display = isAppCard ? '' : 'none';
       ['cc-title-wrap', 'cc-url-wrap', 'new-title-wrap', 'new-url-wrap'].forEach(function (wid) {
         var w = document.getElementById(wid);
         if (w) w.style.display = isAppCard ? 'none' : '';
@@ -1562,9 +1589,16 @@
       }
 
     } catch (e) {
-      console.error('[doValidatePost] network error', e);
+      console.error('[doValidatePost] failed', e);
       clearTransient();
-      if (errBox) { errBox.style.display = 'block'; errBox.textContent = window.t('msg.validateNetErr', 'Network error while validating the post.'); }
+      // Only a fetch that never got an answer is a network problem; anything after
+      // that is the page failing to show a card the server did return.
+      if (errBox) {
+        errBox.style.display = 'block';
+        errBox.textContent = gotReply
+          ? window.t('msg.validateShowErr', 'The card was found, but the page could not display it. Reload the page and try again.')
+          : window.t('msg.validateNetErr', 'Network error while validating the post.');
+      }
     } finally {
       if (spinner) spinner.style.display = 'none';
       // hide any leftover progress text
@@ -2586,9 +2620,10 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ post_url: pUrl, ads_account_id: accountId })
           });
-          const j = await r.json();
-          if (!r.ok) {
-            this.postError = j.detail || window.t('msg.validationFailed', 'Validation failed.');
+          let j = null;
+          try { j = await r.json(); } catch (_) {}
+          if (!r.ok || !j) {
+            this.postError = window.validateErrorText(j, r.status);
             this.loadedCard = null;
             this.showToast(this.postError, true);
             return;
