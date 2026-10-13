@@ -581,6 +581,16 @@
           rows on the next tick (so the Refresh button appeared to do nothing). Keeping a single
           authoritative renderer (vanilla) makes Refresh / save / cancel / run all reliable.
         -->
+        <!-- Filled by renderSchedulesVanilla() from the accounts/handles present in the list. -->
+        <div id="schedules-filters" class="flex flex-wrap items-center gap-2 mb-3" style="display:none;">
+          <select id="schedules-filter-account" aria-label="Ads account" data-i18n-aria-label="list.filterAccount"
+                  class="rounded-lg bg-background border border-input px-2.5 py-1.5 text-xs outline-none focus:border-primary"></select>
+          <select id="schedules-filter-handle" aria-label="X handle" data-i18n-aria-label="list.filterHandle"
+                  class="rounded-lg bg-background border border-input px-2.5 py-1.5 text-xs outline-none focus:border-primary"></select>
+          <button id="schedules-filter-clear" type="button" style="display:none;"
+                  class="text-xs text-muted-foreground hover:text-foreground underline px-1"
+                  data-i18n="list.clearFilters">Clear filters</button>
+        </div>
         <div class="bg-card rounded-2xl border border-border overflow-hidden" id="schedules-list-body">
           <div id="schedules-list-content">
             <div class="p-8 text-center text-sm text-muted-foreground" data-i18n="list.empty">
@@ -588,6 +598,7 @@
             </div>
           </div>
         </div>
+        <div id="schedules-pager" class="flex flex-wrap items-center justify-between gap-2 mt-3 text-xs" style="display:none;"></div>
         <p class="text-[10px] text-muted-foreground mt-2" data-i18n="list.footnote">Scheduled updates run server-side at their exact time (APScheduler). “Run now” is for testing only.</p>
       </div>
 
@@ -1062,6 +1073,7 @@
         }
           // Success message under the Save button (same place as errors), plus the toast.
           setStatus(window.t('msg.scheduleSaved', 'Schedule saved.'), false);
+          try { if (window.showNewestSchedules) window.showNewestSchedules(); } catch(e){}
           try {
             window.dispatchEvent(new CustomEvent('cardx-toast', { detail: { msg: window.t('msg.scheduleSavedRun', 'Schedule saved. It will run at the chosen time.') } }));
           } catch (e) {}
@@ -2914,6 +2926,7 @@
           }
           try { var sts2 = document.getElementById('save-sched-status'); if (sts2) { sts2.textContent = ''; sts2.style.color = ''; } } catch(e){}
           this.showToast(window.t('msg.scheduleSavedRun', 'Schedule saved. It will run at the chosen time.'));
+          try { if (window.showNewestSchedules) window.showNewestSchedules(); } catch(e){}
           // Show success in the same spot as errors (under the Save button).
           try {
             var stsOk = document.getElementById('save-sched-status');
@@ -3504,6 +3517,88 @@
   // Prefers setting Alpine data when the declarative templates are still present (keeps x-for/x-if alive).
   // Falls back to full innerHTML rebuild only when the templates appear to have been replaced already
   // or no Alpine root is attached. This ensures the seeded list (and later refreshes) are visible.
+  // Re-render from the last list the server sent; paging and filtering never refetch.
+  function rerenderSchedulesFromCache() {
+    var cached = window.__lastRenderedSchedules;
+    if (cached) renderSchedulesVanilla(cached);
+  }
+
+  // After saving, the new item could be on another page or hidden by a filter; show it.
+  window.showNewestSchedules = function () {
+    var st = window.__schedListState;
+    if (!st) return;
+    st.page = 1; st.account = ''; st.handle = '';
+    rerenderSchedulesFromCache();
+  };
+
+  function renderScheduleFilters(st, accounts, handles) {
+    var wrap = document.getElementById('schedules-filters');
+    var accSel = document.getElementById('schedules-filter-account');
+    var hSel = document.getElementById('schedules-filter-handle');
+    var clear = document.getElementById('schedules-filter-clear');
+    if (!wrap || !accSel || !hSel) return;
+
+    var accKeys = Object.keys(accounts).sort();
+    var hKeys = Object.keys(handles).sort();
+    accSel.innerHTML = '<option value="">' + escHtml(window.t('list.allAccounts', 'All ads accounts')) + '</option>' +
+      accKeys.map(function(a){ return '<option value="' + escHtml(a) + '">' + escHtml(a) + '</option>'; }).join('');
+    hSel.innerHTML = '<option value="">' + escHtml(window.t('list.allHandles', 'All X handles')) + '</option>' +
+      hKeys.map(function(h){ return '<option value="' + escHtml(h) + '">@' + escHtml(handles[h]) + '</option>'; }).join('');
+    accSel.value = st.account;
+    hSel.value = st.handle;
+
+    // Nothing to choose between with a single account and handle, so keep the bar out of the way.
+    wrap.style.display = (accKeys.length > 1 || hKeys.length > 1 || st.account || st.handle) ? '' : 'none';
+    if (clear) clear.style.display = (st.account || st.handle) ? '' : 'none';
+
+    accSel.onchange = function(){ st.account = accSel.value; st.page = 1; rerenderSchedulesFromCache(); };
+    hSel.onchange = function(){ st.handle = hSel.value; st.page = 1; rerenderSchedulesFromCache(); };
+    if (clear) clear.onclick = function(){ st.account = ''; st.handle = ''; st.page = 1; rerenderSchedulesFromCache(); };
+  }
+
+  function renderSchedulePager(st, pages, total, startIdx, count) {
+    var pager = document.getElementById('schedules-pager');
+    if (!pager) return;
+    if (pages <= 1) { pager.style.display = 'none'; pager.innerHTML = ''; return; }
+
+    // First, last, and the current page's neighbours; gaps collapse to an ellipsis.
+    var nums = [];
+    for (var p = 1; p <= pages; p++) {
+      if (p === 1 || p === pages || Math.abs(p - st.page) <= 1) nums.push(p);
+      else if (nums[nums.length - 1] !== '…') nums.push('…');
+    }
+    var btn = 'min-w-[2rem] rounded-lg border border-border px-2 py-1 transition ';
+    var html = '<span class="text-muted-foreground">' +
+      escHtml(window.tf('list.showing', 'Showing {from}–{to} of {total}', { from: startIdx + 1, to: startIdx + count, total: total })) +
+      '</span><div class="flex items-center gap-1">';
+    html += '<button type="button" data-sched-page="' + (st.page - 1) + '" class="' + btn + 'hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"' +
+      (st.page <= 1 ? ' disabled' : '') + '>‹ ' + escHtml(window.t('list.prevPage', 'Prev')) + '</button>';
+    nums.forEach(function(n){
+      if (n === '…') { html += '<span class="px-1 text-muted-foreground">…</span>'; return; }
+      var cur = n === st.page;
+      html += '<button type="button" data-sched-page="' + n + '" class="' + btn +
+        (cur ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-accent') + '"' +
+        (cur ? ' aria-current="page"' : '') + '>' + n + '</button>';
+    });
+    html += '<button type="button" data-sched-page="' + (st.page + 1) + '" class="' + btn + 'hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"' +
+      (st.page >= pages ? ' disabled' : '') + '>' + escHtml(window.t('list.nextPage', 'Next')) + ' ›</button>';
+    html += '</div>';
+    pager.innerHTML = html;
+    pager.style.display = '';
+
+    pager.onclick = function(e){
+      var b = e.target.closest('[data-sched-page]');
+      if (!b || b.disabled) return;
+      var target = parseInt(b.getAttribute('data-sched-page'), 10);
+      if (!target || target === st.page) return;
+      st.page = target;
+      rerenderSchedulesFromCache();
+      // Land the reader at the top of the new page rather than at the pager.
+      var top = document.getElementById('schedules');
+      if (top && top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  }
+
   function renderSchedulesVanilla(list) {
     var body = document.getElementById('schedules-list-content') || document.getElementById('schedules-list-body');
     if (!body) return;
@@ -3515,6 +3610,8 @@
     if (!list || list.length === 0) {
       body.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">' +
         escHtml(window.t('list.empty', 'No schedules yet. Load a card above and create your first scheduled update.')) + '</div>';
+      var fEmpty = document.getElementById('schedules-filters'); if (fEmpty) fEmpty.style.display = 'none';
+      var pEmpty = document.getElementById('schedules-pager'); if (pEmpty) pEmpty.style.display = 'none';
       return;
     }
     // Sanitize any legacy JSON results for completed (defensive, in case list came from memory)
@@ -3575,8 +3672,9 @@
             '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + escHtml(statusLabel(s.status)) + '</span>' +
           '</div>';
       } else {
-        header = '<div class="flex items-center gap-2">' +
+        header = '<div class="flex items-center gap-2 flex-wrap">' +
             '<span class="font-mono text-xs px-1.5 py-0.5 bg-muted rounded">' + escHtml(s.ads_account_id || '') + '</span>' +
+            (s.post_handle ? '<span class="text-xs text-muted-foreground">@' + escHtml(s.post_handle) + '</span>' : '') +
             '<span class="font-mono text-xs text-muted-foreground">' + escHtml(window.t('list.card', 'card:')) + '</span>' +
             '<span class="font-mono text-xs">' + escHtml(s.card_id || '') + '</span>' +
             '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + escHtml(statusLabel(s.status)) + '</span>' +
@@ -3711,7 +3809,9 @@
               '<span class="text-[10px] px-1.5 py-px rounded bg-muted text-muted-foreground">' + escHtml(window.tf('list.ofDone', '{done} of {total} done', { done: counts.completed, total: total })) + '</span>' +
             '</div>' +
             '<div class="text-[11px] text-muted-foreground">' +
-              '<span class="font-mono">' + escHtml((steps[0] && steps[0].ads_account_id) || '') + '</span> · ' + escHtml(window.t('list.card', 'card:')) + ' <span class="font-mono">' + escHtml((steps[0] && steps[0].card_id) || '') + '</span>' +
+              '<span class="font-mono">' + escHtml((steps[0] && steps[0].ads_account_id) || '') + '</span>' +
+              ((steps[0] && steps[0].post_handle) ? ' · @' + escHtml(steps[0].post_handle) : '') +
+              ' · ' + escHtml(window.t('list.card', 'card:')) + ' <span class="font-mono">' + escHtml((steps[0] && steps[0].card_id) || '') + '</span>' +
             '</div>' +
             (function(){ var pu = (steps[0] && steps[0].original_post_url) || ''; return pu ? '<div class="text-[11px] text-muted-foreground">' + escHtml(window.t('list.post', 'Post: ')) + '<a href="' + escHtml(pu) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(pu) + '</a></div>' : ''; })() +
             '<div class="text-[11px] text-muted-foreground">' + escHtml(breakdownParts.join(' · ')) + '</div>' +
@@ -3739,13 +3839,51 @@
       }
     });
 
-    var html = '<div class="divide-y divide-border text-sm">';
+    // Filters and pages work on whole items: a series is one item, and all its steps
+    // share one ads account and post, so its first step stands for the group.
     order.forEach(function(tok){
+      var rep = tok.type === 'one' ? tok.s : (list.filter(function(x){ return x.series_id === tok.id; })[0] || {});
+      tok.account = String(rep.ads_account_id || '');
+      tok.handle = String(rep.post_handle || '');
+    });
+
+    var st = window.__schedListState = window.__schedListState || { page: 1, account: '', handle: '' };
+    var accounts = {}, handles = {};
+    order.forEach(function(tok){
+      if (tok.account) accounts[tok.account] = true;
+      // Handles are case-insensitive on X; group them under one entry.
+      if (tok.handle) handles[tok.handle.toLowerCase()] = handles[tok.handle.toLowerCase()] || tok.handle;
+    });
+    // A filter whose value no longer appears in the list would hide everything silently.
+    if (st.account && !accounts[st.account]) st.account = '';
+    if (st.handle && !handles[st.handle]) st.handle = '';
+
+    var shown = order.filter(function(tok){
+      return (!st.account || tok.account === st.account) &&
+             (!st.handle || tok.handle.toLowerCase() === st.handle);
+    });
+
+    var PAGE_SIZE = 10;
+    var pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+    if (st.page > pages) st.page = pages;
+    if (st.page < 1) st.page = 1;
+    var startIdx = (st.page - 1) * PAGE_SIZE;
+    var pageItems = shown.slice(startIdx, startIdx + PAGE_SIZE);
+
+    var html = '<div class="divide-y divide-border text-sm">';
+    pageItems.forEach(function(tok){
       if (tok.type === 'one') { html += rowHtml(tok.s, { oneTimeTag:true }); }
       else { html += seriesHtml(tok.id, list.filter(function(x){ return x.series_id === tok.id; })); }
     });
+    if (!pageItems.length) {
+      html += '<div class="p-8 text-center text-sm text-muted-foreground">' +
+        escHtml(window.t('list.noMatch', 'No scheduled updates match these filters.')) + '</div>';
+    }
     html += '</div>';
     body.innerHTML = html;
+
+    renderScheduleFilters(st, accounts, handles);
+    renderSchedulePager(st, pages, shown.length, startIdx, pageItems.length);
 
     // Wire series expand/collapse toggles.
     window.__seriesExpanded = window.__seriesExpanded || {};
@@ -4994,6 +5132,7 @@
         return;
       }
       setError('');
+      try { if (window.showNewestSchedules) window.showNewestSchedules(); } catch(e){}
       if (statusEl) {
         // Same identity check as the save-schedule status: clear only this message.
         var createdMsg = window.t('series.created', 'Series created.');
