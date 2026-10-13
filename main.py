@@ -271,6 +271,16 @@ def seed_bootstrap_admin():
     create_app_user(BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_PASSWORD, ROLE_ADMIN, must_change=False, created_by="bootstrap")
     print(f"[auth] Seeded first admin account '{BOOTSTRAP_ADMIN_USERNAME}'.")
 
+_POST_URL_HANDLE_RE = re.compile(r"https?://(?:www\.)?(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})/status/\d+", re.I)
+
+def handle_from_post_url(url: str) -> str:
+    """The handle written in a pasted post URL. X opens a post whatever handle is in
+    the path, so this is only a fallback for when the real author is unknown."""
+    m = _POST_URL_HANDLE_RE.search(url or "")
+    if not m or m.group(1).lower() == "i":
+        return ""
+    return m.group(1)
+
 def init_db():
     conn = get_db()
     c = conn.cursor()
@@ -352,6 +362,16 @@ def init_db():
         c.execute("ALTER TABLE schedules ADD COLUMN app_username TEXT")
     except Exception:
         pass
+    # Handle of the account that published the promoted post, for filtering the list.
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN post_handle TEXT")
+    except Exception:
+        pass
+    # Rows saved before this column existed only have the pasted URL to go on.
+    for sid, url in c.execute(
+        "SELECT id, original_post_url FROM schedules WHERE post_handle IS NULL AND original_post_url IS NOT NULL"
+    ).fetchall():
+        c.execute("UPDATE schedules SET post_handle = ? WHERE id = ?", (handle_from_post_url(url), sid))
     c.execute("""
         CREATE TABLE IF NOT EXISTS tokens (
             x_user_id TEXT PRIMARY KEY,
@@ -395,14 +415,14 @@ def persist_schedule(rec: Dict[str, Any]):
     c = conn.cursor()
     c.execute("""
         INSERT OR REPLACE INTO schedules
-        (id, user_id, app_user_id, app_username, ads_account_id, card_id, card_type,
+        (id, user_id, app_user_id, app_username, post_handle, ads_account_id, card_id, card_type,
          original_title, original_media_id, original_url, original_post_url,
          original_media_width, original_media_height, original_media_type,
          new_title, new_media_id, new_url, new_media_type,
          original_preview, new_preview,
          scheduled_at, status, result, executed_at, created_at,
          series_id, series_label, step, stop_on_failure)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         rec.get("id"),
         rec.get("user_id"),
@@ -410,6 +430,7 @@ def persist_schedule(rec: Dict[str, Any]):
         # here or every status update would blank it out.
         rec.get("app_user_id"),
         rec.get("app_username"),
+        rec.get("post_handle"),
         rec.get("ads_account_id"),
         rec.get("card_id"),
         rec.get("card_type"),
@@ -1124,6 +1145,25 @@ TWEET_URL_RE = re.compile(r"https?://(?:www\.)?(?:x|twitter)\.com/[^/]+/status/(
 def extract_tweet_id(url: str) -> Optional[str]:
     m = TWEET_URL_RE.search(url or "")
     return m.group(1) if m else None
+
+# Real post authors seen by /api/validate-post, keyed by tweet id, so a schedule saved
+# moments later records who actually published the post rather than trusting the URL.
+_POST_AUTHORS: Dict[str, str] = {}
+
+def remember_post_author(tweet_id: str, raw_tweet: Dict[str, Any]) -> str:
+    tweet = (raw_tweet or {}).get("data") or {}
+    author_id = tweet.get("author_id")
+    for u in ((raw_tweet or {}).get("includes") or {}).get("users") or []:
+        if u.get("username") and (not author_id or u.get("id") == author_id):
+            if len(_POST_AUTHORS) > 2000:
+                _POST_AUTHORS.clear()
+            _POST_AUTHORS[str(tweet_id)] = u["username"]
+            return u["username"]
+    return ""
+
+def post_handle_for(post_url: str) -> str:
+    tweet_id = extract_tweet_id(post_url or "")
+    return (tweet_id and _POST_AUTHORS.get(tweet_id)) or handle_from_post_url(post_url)
 
 async def validate_tweet_has_card(access_token: str, tweet_id: str, oauth_token_secret: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -3040,6 +3080,7 @@ async def api_validate_post(request: Request, user: Dict[str, Any] = Depends(req
     v = await validate_tweet_has_card(access, tweet_id, oauth_token_secret=oauth_secret if oauth_secret else None)
     card_id = v["card_id"]
     tweet = v.get("tweet") or {}
+    post_handle = remember_post_author(tweet_id, v.get("raw") or {})
     print(f"[validate] STEP 1 SUCCESS — post exists and has a card. card_id derived from card_uri = {card_id}")
 
     # ---------------------------------------------------------------------
@@ -3136,7 +3177,7 @@ async def api_validate_post(request: Request, user: Dict[str, Any] = Depends(req
 
     print("[validate] STEP 2 parsed card for UI:", {k: card.get(k) for k in ("id", "title", "url", "media_id", "original_media_type", "original_media_width", "original_media_height", "media_preview")})
 
-    return {"ok": True, "tweet_id": tweet_id, "card": card, "card_id": card_id}
+    return {"ok": True, "tweet_id": tweet_id, "card": card, "card_id": card_id, "post_handle": post_handle}
 
 @app.post("/api/check-media")
 async def api_check_media(request: Request, user: Dict[str, Any] = Depends(require_user)):
@@ -3488,6 +3529,7 @@ async def api_create_schedule(payload: ScheduleIn, request: Request, user: Dict[
         "user_id": user["id"],
         "app_user_id": (_app or {}).get("id"),
         "app_username": (_app or {}).get("username"),
+        "post_handle": post_handle_for(payload.original_post_url or ""),
         "ads_account_id": payload.ads_account_id,
         "card_id": payload.card_id,
         "card_type": payload.card_type or "website",
@@ -3530,15 +3572,15 @@ async def api_create_schedule(payload: ScheduleIn, request: Request, user: Dict[
     c = conn.cursor()
     c.execute("""
         INSERT INTO schedules
-        (user_id, app_user_id, app_username, ads_account_id, card_id, card_type,
+        (user_id, app_user_id, app_username, post_handle, ads_account_id, card_id, card_type,
          original_title, original_media_id, original_url, original_post_url,
          original_media_width, original_media_height, original_media_type,
          new_title, new_media_id, new_url, new_media_type,
          original_preview, new_preview,
          scheduled_at, status, result, executed_at, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        rec["user_id"], rec.get("app_user_id"), rec.get("app_username"),
+        rec["user_id"], rec.get("app_user_id"), rec.get("app_username"), rec.get("post_handle"),
         rec["ads_account_id"], rec["card_id"], rec["card_type"],
         rec["original_title"], rec["original_media_id"], rec["original_url"], rec.get("original_post_url"),
         rec["original_media_width"], rec["original_media_height"], rec["original_media_type"],
@@ -3673,6 +3715,7 @@ async def api_create_series(payload: SeriesCreateIn, request: Request, user: Dic
             "user_id": user["id"],
             "app_user_id": (_app_series or {}).get("id"),
             "app_username": (_app_series or {}).get("username"),
+            "post_handle": post_handle_for(payload.original_post_url or ""),
             "ads_account_id": payload.ads_account_id,
             "card_id": payload.card_id,
             "card_type": payload.card_type or "website",
@@ -3714,16 +3757,16 @@ async def api_create_series(payload: SeriesCreateIn, request: Request, user: Dic
             rec["stop_on_failure"] = stop_flag
             c.execute("""
                 INSERT INTO schedules
-                (user_id, app_user_id, app_username, ads_account_id, card_id, card_type,
+                (user_id, app_user_id, app_username, post_handle, ads_account_id, card_id, card_type,
                  original_title, original_media_id, original_url, original_post_url,
                  original_media_width, original_media_height, original_media_type,
                  new_title, new_media_id, new_url, new_media_type,
                  original_preview, new_preview,
                  scheduled_at, status, result, executed_at, created_at,
                  series_id, series_label, step, stop_on_failure)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                rec["user_id"], rec.get("app_user_id"), rec.get("app_username"),
+                rec["user_id"], rec.get("app_user_id"), rec.get("app_username"), rec.get("post_handle"),
                 rec["ads_account_id"], rec["card_id"], rec["card_type"],
                 rec["original_title"], rec["original_media_id"], rec["original_url"], rec.get("original_post_url"),
                 rec["original_media_width"], rec["original_media_height"], rec["original_media_type"],
