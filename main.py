@@ -218,13 +218,16 @@ def get_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
         conn.close()
 
 def count_admins(exclude_id: Optional[int] = None) -> int:
+    """Admins who can still sign in. A disabled admin cannot rescue a locked-out tool."""
     conn = get_db()
     try:
         if exclude_id is None:
-            row = conn.execute("SELECT COUNT(*) FROM users WHERE role = ?", (ROLE_ADMIN,)).fetchone()
+            row = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role = ? AND disabled = 0", (ROLE_ADMIN,)
+            ).fetchone()
         else:
             row = conn.execute(
-                "SELECT COUNT(*) FROM users WHERE role = ? AND id != ?", (ROLE_ADMIN, exclude_id)
+                "SELECT COUNT(*) FROM users WHERE role = ? AND disabled = 0 AND id != ?", (ROLE_ADMIN, exclude_id)
             ).fetchone()
         return int(row[0] if row else 0)
     finally:
@@ -353,6 +356,10 @@ def init_db():
             last_login_at REAL
         )
     """)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
     # Records which application account created a schedule, so the read-across
     # roles can see who scheduled what. Existing rows keep NULL.
     try:
@@ -2274,6 +2281,14 @@ async def app_auth_gate(request: Request, call_next):
 
     uid = request.session.get("app_uid")
     user = get_user_by_id(uid) if uid else None
+    if user and user.get("disabled"):
+        # Disabling takes effect on the user's next request, not just their next sign-in.
+        request.session.pop("app_uid", None)
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "This account has been disabled."}, status_code=401)
+        resp = RedirectResponse("/signin?disabled=1", status_code=303)
+        clear_session_cookie(resp)
+        return resp
     if not user:
         # Stale id (e.g. the account was deleted while signed in) — drop it.
         request.session.pop("app_uid", None)
@@ -2687,8 +2702,14 @@ async def logout(request: Request):
 async def signin_page(request: Request):
     # Already signed in — skip the form.
     uid = request.session.get("app_uid")
-    if uid and get_user_by_id(uid):
+    current = get_user_by_id(uid) if uid else None
+    if current and not current.get("disabled"):
         return RedirectResponse("/", status_code=303)
+    if request.query_params.get("disabled"):
+        return templates.TemplateResponse(
+            "signin.html",
+            {"request": request, "error": "This account has been disabled. Ask an admin to enable it.", "disabled": True},
+        )
     return templates.TemplateResponse("signin.html", {"request": request, "error": None})
 
 # Failed sign-ins per username, held in memory. Fine with a single worker (see
@@ -2750,6 +2771,14 @@ async def signin_submit(request: Request, username: str = Form(""), password: st
             status_code=401,
         )
     clear_signin_failures(username)
+    # Only revealed after the password matches, so it cannot be used to probe which
+    # usernames exist.
+    if user.get("disabled"):
+        return templates.TemplateResponse(
+            "signin.html",
+            {"request": request, "error": "This account has been disabled. Ask an admin to enable it.", "disabled": True},
+            status_code=403,
+        )
     # New session id on privilege change, so a pre-login cookie cannot be replayed.
     request.session.clear()
     request.session["app_uid"] = user["id"]
@@ -2852,6 +2881,7 @@ def _public_user(row: Dict[str, Any]) -> Dict[str, Any]:
         "role": row.get("role"),
         "role_label": ROLE_LABELS.get(row.get("role"), row.get("role")),
         "must_change_password": bool(row.get("must_change_password")),
+        "disabled": bool(row.get("disabled")),
         "created_at": row.get("created_at"),
         "created_by": row.get("created_by"),
         "last_login_at": row.get("last_login_at"),
@@ -2977,6 +3007,31 @@ async def api_set_user_role(user_id: int, request: Request):
         conn.commit()
     finally:
         conn.close()
+    return {"user": _public_user(get_user_by_id(user_id))}
+
+@app.post("/api/admin/users/{user_id}/disabled")
+async def api_set_user_disabled(user_id: int, request: Request):
+    admin = require_admin(request)
+    body = await request.json()
+    disabled = body.get("disabled")
+    if not isinstance(disabled, bool):
+        raise HTTPException(status_code=400, detail="disabled must be true or false.")
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if disabled:
+        if int(user_id) == int(admin["id"]):
+            raise HTTPException(status_code=400, detail="You cannot disable your own account.")
+        if target.get("role") == ROLE_ADMIN and count_admins(exclude_id=user_id) == 0:
+            raise HTTPException(status_code=400, detail="This is the last admin account — promote someone else first.")
+    conn = get_db()
+    try:
+        conn.execute("UPDATE users SET disabled = ? WHERE id = ?", (1 if disabled else 0, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+    # Their schedules are keyed on the X account, so they keep running; cancel them
+    # from the schedule list if they should stop too.
     return {"user": _public_user(get_user_by_id(user_id))}
 
 # --------------------------------------------------------------------------------------

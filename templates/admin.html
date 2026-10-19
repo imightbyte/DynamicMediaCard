@@ -138,7 +138,10 @@
     }
     body.innerHTML = users.map(function (u) {
       var isMe = String(u.id) === String(ME_ID);
-      var status = u.must_change_password
+      var status = u.disabled
+        ? '<span class="text-[10px] px-1.5 py-px rounded bg-zinc-500/20 text-zinc-400">'
+            + esc(window.t('admin.disabled', 'disabled')) + '</span>'
+        : u.must_change_password
         ? '<span class="text-[10px] px-1.5 py-px rounded bg-amber-500/10 text-amber-400">'
             + esc(window.t('admin.pendingFirstSignIn', 'awaiting first sign-in')) + '</span>'
         : '<span class="text-[10px] px-1.5 py-px rounded bg-green-500/10 text-green-400">'
@@ -147,7 +150,7 @@
       return ''
         + '<tr data-user-row="' + esc(u.id) + '">'
         +   '<td class="px-5 py-3">'
-        +     '<span class="font-medium">' + esc(u.username) + '</span>'
+        +     '<span class="font-medium' + (u.disabled ? ' text-muted-foreground line-through' : '') + '">' + esc(u.username) + '</span>'
         +     (isMe ? ' <span class="text-[10px] text-muted-foreground">(' + esc(window.t('admin.you', 'you')) + ')</span>' : '')
         +   '</td>'
         +   '<td class="px-5 py-3">'
@@ -159,6 +162,9 @@
         +   '<td class="px-5 py-3 text-right whitespace-nowrap">'
         +     '<button type="button" data-reset="' + esc(u.id) + '" class="text-xs rounded border border-border px-2 py-1 hover:bg-accent transition">'
         +       esc(window.t('admin.resetPassword', 'Reset password')) + '</button> '
+        +     (isMe ? '' :
+              '<button type="button" data-toggle-disabled="' + esc(u.id) + '" data-disabled="' + (u.disabled ? '1' : '0') + '" data-username="' + esc(u.username) + '" class="text-xs rounded border border-border px-2 py-1 hover:bg-accent transition">'
+        +       esc(u.disabled ? window.t('admin.enable', 'Enable') : window.t('admin.disable', 'Disable')) + '</button> ')
         +     (isMe ? '' :
               '<button type="button" data-delete="' + esc(u.id) + '" data-username="' + esc(u.username) + '" class="text-xs rounded border border-destructive/40 text-destructive px-2 py-1 hover:bg-destructive/10 transition">'
         +       esc(window.t('admin.delete', 'Delete')) + '</button>')
@@ -230,6 +236,30 @@
   document.getElementById('u-body').addEventListener('click', async function (e) {
     var resetBtn = e.target.closest('[data-reset]');
     var delBtn = e.target.closest('[data-delete]');
+    var toggleBtn = e.target.closest('[data-toggle-disabled]');
+
+    if (toggleBtn) {
+      clearError();
+      var tid = toggleBtn.getAttribute('data-toggle-disabled');
+      var tname = toggleBtn.getAttribute('data-username') || '';
+      var disable = toggleBtn.getAttribute('data-disabled') !== '1';
+      if (disable && !confirm(window.tf('admin.confirmDisable',
+        'Disable {name}? They are signed out right away and cannot sign in until you enable them again. Their scheduled updates keep running.',
+        { name: tname }))) return;
+      try {
+        var res3 = await fetch('/api/admin/users/' + encodeURIComponent(tid) + '/disabled', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ disabled: disable })
+        });
+        var j3 = await res3.json().catch(function () { return {}; });
+        if (!res3.ok) { showError(j3.detail || window.t('admin.errDisable', 'Could not change whether the user is enabled.')); return; }
+        loadUsers();
+      } catch (err) {
+        showError(window.t('admin.errNetwork', 'Network error. Please try again.'));
+      }
+      return;
+    }
 
     if (resetBtn) {
       clearError();
