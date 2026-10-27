@@ -3666,6 +3666,13 @@
       }
       return s;
     });
+    // "Scheduled by @x" only when the X account that saved it isn't the post's own account.
+    function scheduledByHtml(s, cls){
+      var by = String((s && s.scheduled_by_handle) || '');
+      if (!by || by.toLowerCase() === String(s.post_handle || '').toLowerCase()) return '';
+      return '<span class="' + (cls ? cls + ' ' : '') + 'text-amber-400" data-scheduled-by>' +
+        escHtml(window.tf('list.scheduledBy', 'Scheduled by @{handle}', { handle: by })) + '</span>';
+    }
     function statusClass(status){
       var sc = 'bg-zinc-500/10 text-zinc-400';
       if (status === 'pending')   sc = 'bg-yellow-500/10 text-yellow-400';
@@ -3710,6 +3717,7 @@
         header = '<div class="flex items-center gap-2 flex-wrap">' +
             '<span class="font-mono text-xs px-1.5 py-0.5 bg-muted rounded">' + escHtml(s.ads_account_id || '') + '</span>' +
             (s.post_handle ? '<span class="text-xs text-muted-foreground">@' + escHtml(s.post_handle) + '</span>' : '') +
+            scheduledByHtml(s, 'text-xs') +
             '<span class="font-mono text-xs text-muted-foreground">' + escHtml(window.t('list.card', 'card:')) + '</span>' +
             '<span class="font-mono text-xs">' + escHtml(s.card_id || '') + '</span>' +
             '<span class="text-[10px] px-1.5 py-px rounded ' + sc + '" data-status-badge>' + escHtml(statusLabel(s.status)) + '</span>' +
@@ -3846,6 +3854,7 @@
             '<div class="text-[11px] text-muted-foreground">' +
               '<span class="font-mono">' + escHtml((steps[0] && steps[0].ads_account_id) || '') + '</span>' +
               ((steps[0] && steps[0].post_handle) ? ' · @' + escHtml(steps[0].post_handle) : '') +
+              (steps[0] && scheduledByHtml(steps[0]) ? ' · ' + scheduledByHtml(steps[0]) : '') +
               ' · ' + escHtml(window.t('list.card', 'card:')) + ' <span class="font-mono">' + escHtml((steps[0] && steps[0].card_id) || '') + '</span>' +
             '</div>' +
             (function(){ var pu = (steps[0] && steps[0].original_post_url) || ''; return pu ? '<div class="text-[11px] text-muted-foreground">' + escHtml(window.t('list.post', 'Post: ')) + '<a href="' + escHtml(pu) + '" target="_blank" rel="noopener noreferrer" class="text-primary underline break-all">' + escHtml(pu) + '</a></div>' : ''; })() +
