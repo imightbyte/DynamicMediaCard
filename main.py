@@ -375,6 +375,13 @@ def init_db():
         c.execute("ALTER TABLE schedules ADD COLUMN post_handle TEXT")
     except Exception:
         pass
+    # X handle that created the schedule, which can differ from post_handle when one
+    # X account manages another's ads account. Older rows are filled in by
+    # backfill_scheduled_by() the next time that X account signs in.
+    try:
+        c.execute("ALTER TABLE schedules ADD COLUMN scheduled_by_handle TEXT")
+    except Exception:
+        pass
     # Rows saved before this column existed only have the pasted URL to go on.
     for sid, url in c.execute(
         "SELECT id, original_post_url FROM schedules WHERE post_handle IS NULL AND original_post_url IS NOT NULL"
@@ -423,14 +430,15 @@ def persist_schedule(rec: Dict[str, Any]):
     c = conn.cursor()
     c.execute("""
         INSERT OR REPLACE INTO schedules
-        (id, user_id, app_user_id, app_username, post_handle, ads_account_id, card_id, card_type,
+        (id, user_id, app_user_id, app_username, post_handle, scheduled_by_handle,
+         ads_account_id, card_id, card_type,
          original_title, original_media_id, original_url, original_post_url,
          original_media_width, original_media_height, original_media_type,
          new_title, new_media_id, new_url, new_media_type,
          original_preview, new_preview,
          scheduled_at, status, result, executed_at, created_at,
          series_id, series_label, step, stop_on_failure)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         rec.get("id"),
         rec.get("user_id"),
@@ -439,6 +447,7 @@ def persist_schedule(rec: Dict[str, Any]):
         rec.get("app_user_id"),
         rec.get("app_username"),
         rec.get("post_handle"),
+        rec.get("scheduled_by_handle"),
         rec.get("ads_account_id"),
         rec.get("card_id"),
         rec.get("card_type"),
@@ -467,6 +476,25 @@ def persist_schedule(rec: Dict[str, Any]):
     ))
     conn.commit()
     conn.close()
+
+def backfill_scheduled_by(xuid: str, username: Optional[str]):
+    """Fill scheduled_by_handle on this X account's older schedules, which predate the column."""
+    if not xuid or not username:
+        return
+    try:
+        conn = get_db()
+        conn.execute(
+            "UPDATE schedules SET scheduled_by_handle = ? WHERE user_id = ? AND scheduled_by_handle IS NULL",
+            (username, xuid),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[backfill_scheduled_by] failed for {xuid}: {e!r}")
+        return
+    for rec in SCHEDULES.values():
+        if rec.get("user_id") == xuid and not rec.get("scheduled_by_handle"):
+            rec["scheduled_by_handle"] = username
 
 def persist_token(xuid: str, tok: Dict[str, Any]):
     conn = get_db()
@@ -717,6 +745,7 @@ async def rehydrate_user(request: Request) -> Optional[Dict[str, Any]]:
         except Exception as e:
             print(f"[rehydrate_user] profile re-fetch failed for {xuid}: {e!r}")
             return base
+        backfill_scheduled_by(xuid, USERS[xuid].get("username"))
     return _build_user_dict(xuid)
 
 async def require_user(request: Request) -> Dict[str, Any]:
@@ -2406,10 +2435,10 @@ async def index(request: Request):
             # No automatic client fetch on page load. The list is only refreshed on explicit user Refresh
             # or after the user performs a mutating action (save/cancel/run).
             if can_see_all_schedules(current_app_user(request)):
-                rows = conn.execute("SELECT * FROM schedules LIMIT 200").fetchall()
+                rows = conn.execute("SELECT * FROM schedules ORDER BY id DESC LIMIT 200").fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
+                    "SELECT * FROM schedules WHERE user_id = ? ORDER BY id DESC LIMIT 200",
                     (user["id"],)
                 ).fetchall()
             initial_schedules = [dict(r) for r in rows]
@@ -2607,6 +2636,7 @@ async def callback(
             "scope": "oauth1",
         }
         persist_token(xuid, TOKENS[xuid])
+        backfill_scheduled_by(xuid, profile["username"])
 
         # Clean session
         request.session.pop("oauth1_request_token", None)
@@ -3054,27 +3084,21 @@ async def api_me(user: Dict[str, Any] = Depends(get_user_from_cookie)):
 @app.get("/api/ads-accounts")
 async def api_ads_accounts(user: Dict[str, Any] = Depends(require_user)):
     srv_id = f"s{int(time.time()*1000)%10000000}"
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    print(f"[ADS-ACCOUNTS] *********** ENDPOINT HIT srv_id={srv_id} ***********")
-    print(f"[ADS-ACCOUNTS] user in request: username={user.get('username')}, x_user_id={user.get('x_user_id') or user.get('id')}")
     access = await refresh_x_token_if_needed(user)
     granted_scopes = user.get("scope") or ""
     secret = user.get("oauth_token_secret", "")
-    print(f"[ADS-ACCOUNTS] Fetching accounts for user {user.get('username') or user.get('x_user_id')} using OAuth1 token (has_secret={bool(secret)}) srv_id={srv_id}")
+    # Logs carry counts only: account names and business details stay out of Render's logs.
+    who = f"@{user.get('username')}" if user.get("username") else (user.get("x_user_id") or user.get("id"))
     try:
         data = await ads_get("/accounts", access, {"count": 50}, oauth_token_secret=secret)
-        print(f"[ADS-ACCOUNTS] raw response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-        print(f"[ADS-ACCOUNTS] RAW RESPONSE (truncated): {str(data)[:2000]}")
         req_part = (data.get("request") or {}) if isinstance(data, dict) else {}
-        print(f"[ADS-ACCOUNTS] request part: {req_part}")
-        print(f"[ADS-ACCOUNTS] data['data'] (first 3): {(data.get('data') or [])[:3] if isinstance(data, dict) else 'N/A'}")
         # Ads (and X) APIs sometimes return HTTP 200 + "errors" array for auth/permission issues
         if isinstance(data, dict) and data.get("errors"):
             errs = data.get("errors") or []
             first = errs[0] if errs else {}
             msg = first.get("message") or str(first) or "Unknown Ads API error"
             code = first.get("code")
-            print(f"[ADS-ACCOUNTS] errors in response: {errs}")
+            print(f"[ADS-ACCOUNTS] {who}: Ads API error {code}: {msg} srv_id={srv_id}")
             return JSONResponse({
                 "accounts": [],
                 "error": f"{msg} (code {code})",
@@ -3098,11 +3122,10 @@ async def api_ads_accounts(user: Dict[str, Any] = Depends(require_user)):
             aid = p.get("account_id")
             if aid:
                 if not any((ac.get("id") == aid) for ac in accounts):
-                    print(f"[ADS-ACCOUNTS] harvested account from request.params.account_id: {aid}")
                     accounts.append({"id": aid, "name": "", "timezone": None})
         except Exception as _e:
             print(f"[ADS-ACCOUNTS] harvest error: {_e}")
-        print(f"[ADS-ACCOUNTS] found {len(accounts)} account(s) from live list")
+        live_count = len(accounts)
 
         # 1) Supplement with this user's previously scheduled ads accounts (so we can prepopulate even if /accounts list is empty for this token)
         try:
@@ -3116,7 +3139,6 @@ async def api_ads_accounts(user: Dict[str, Any] = Depends(require_user)):
                 for r in rows:
                     aid = r["ads_account_id"] if "ads_account_id" in r.keys() else (r[0] if r else None)
                     if aid and not any((ac.get("id") == aid) for ac in accounts):
-                        print(f"[ADS-ACCOUNTS] added previously used account from schedules: {aid}")
                         accounts.append({"id": aid, "name": "(previously used)", "timezone": None})
         except Exception as _e:
             print(f"[ADS-ACCOUNTS] schedule history lookup error: {_e}")
@@ -3145,15 +3167,12 @@ async def api_ads_accounts(user: Dict[str, Any] = Depends(require_user)):
 
         for aid in _deep_find_account_ids(data):
             if not any((ac.get("id") == aid) for ac in accounts):
-                print(f"[ADS-ACCOUNTS] deep-harvested account id from raw response: {aid}")
                 accounts.append({"id": aid, "name": "", "timezone": None})
 
-        print(f"[ADS-ACCOUNTS] total accounts after supplements/harvest: {len(accounts)} srv_id={srv_id}")
-        print(f"[ADS-ACCOUNTS] >>> RETURNING accounts list: {accounts}")
-        print(f"[ADS-ACCOUNTS] >>> full payload summary: accounts_len={len(accounts)}, has_error={'error' in locals() or False} srv_id={srv_id}")
+        print(f"[ADS-ACCOUNTS] {who}: {len(accounts)} account(s) ({live_count} from live list) srv_id={srv_id}")
         return {"accounts": accounts, "granted_scopes": granted_scopes, "srv_id": srv_id, "raw_request": req_part, "raw": data}
     except HTTPException as e:
-        print(f"[ADS-ACCOUNTS] HTTP error: {e.status_code} {e.detail} srv_id={srv_id}")
+        print(f"[ADS-ACCOUNTS] {who}: HTTP error {e.status_code} {e.detail} srv_id={srv_id}")
         return JSONResponse({"accounts": [], "error": str(e.detail), "granted_scopes": granted_scopes, "srv_id": srv_id}, status_code=200)
     except Exception as e:
         print(f"[ADS-ACCOUNTS] unexpected error: {repr(e)} srv_id={srv_id}")
@@ -3703,6 +3722,7 @@ async def api_create_schedule(payload: ScheduleIn, request: Request, user: Dict[
         "app_user_id": (_app or {}).get("id"),
         "app_username": (_app or {}).get("username"),
         "post_handle": post_handle_for(payload.original_post_url or ""),
+        "scheduled_by_handle": user.get("username"),
         "ads_account_id": payload.ads_account_id,
         "card_id": payload.card_id,
         "card_type": payload.card_type or "website",
@@ -3745,15 +3765,17 @@ async def api_create_schedule(payload: ScheduleIn, request: Request, user: Dict[
     c = conn.cursor()
     c.execute("""
         INSERT INTO schedules
-        (user_id, app_user_id, app_username, post_handle, ads_account_id, card_id, card_type,
+        (user_id, app_user_id, app_username, post_handle, scheduled_by_handle,
+         ads_account_id, card_id, card_type,
          original_title, original_media_id, original_url, original_post_url,
          original_media_width, original_media_height, original_media_type,
          new_title, new_media_id, new_url, new_media_type,
          original_preview, new_preview,
          scheduled_at, status, result, executed_at, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         rec["user_id"], rec.get("app_user_id"), rec.get("app_username"), rec.get("post_handle"),
+        rec.get("scheduled_by_handle"),
         rec["ads_account_id"], rec["card_id"], rec["card_type"],
         rec["original_title"], rec["original_media_id"], rec["original_url"], rec.get("original_post_url"),
         rec["original_media_width"], rec["original_media_height"], rec["original_media_type"],
@@ -3889,6 +3911,7 @@ async def api_create_series(payload: SeriesCreateIn, request: Request, user: Dic
             "app_user_id": (_app_series or {}).get("id"),
             "app_username": (_app_series or {}).get("username"),
             "post_handle": post_handle_for(payload.original_post_url or ""),
+            "scheduled_by_handle": user.get("username"),
             "ads_account_id": payload.ads_account_id,
             "card_id": payload.card_id,
             "card_type": payload.card_type or "website",
@@ -3930,16 +3953,18 @@ async def api_create_series(payload: SeriesCreateIn, request: Request, user: Dic
             rec["stop_on_failure"] = stop_flag
             c.execute("""
                 INSERT INTO schedules
-                (user_id, app_user_id, app_username, post_handle, ads_account_id, card_id, card_type,
+                (user_id, app_user_id, app_username, post_handle, scheduled_by_handle,
+                 ads_account_id, card_id, card_type,
                  original_title, original_media_id, original_url, original_post_url,
                  original_media_width, original_media_height, original_media_type,
                  new_title, new_media_id, new_url, new_media_type,
                  original_preview, new_preview,
                  scheduled_at, status, result, executed_at, created_at,
                  series_id, series_label, step, stop_on_failure)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 rec["user_id"], rec.get("app_user_id"), rec.get("app_username"), rec.get("post_handle"),
+                rec.get("scheduled_by_handle"),
                 rec["ads_account_id"], rec["card_id"], rec["card_type"],
                 rec["original_title"], rec["original_media_id"], rec["original_url"], rec.get("original_post_url"),
                 rec["original_media_width"], rec["original_media_height"], rec["original_media_type"],
@@ -3992,10 +4017,10 @@ async def api_list_schedules(request: Request, user: Dict[str, Any] = Depends(re
     # that haven't been touched in this process lifetime and therefore aren't in SCHEDULES yet).
     conn = get_db()
     if see_all:
-        rows = conn.execute("SELECT * FROM schedules LIMIT 200").fetchall()
+        rows = conn.execute("SELECT * FROM schedules ORDER BY id DESC LIMIT 200").fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM schedules WHERE user_id = ? LIMIT 200",
+            "SELECT * FROM schedules WHERE user_id = ? ORDER BY id DESC LIMIT 200",
             (user["id"],)
         ).fetchall()
     conn.close()
