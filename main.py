@@ -792,6 +792,10 @@ class ValidateError(Exception):
         "post_not_found": "This post could not be found. It may have been deleted, or the link may be wrong.",
         "post_not_visible": "This post is from a protected account that the X account you connected cannot see.",
         "post_no_card": "This post has no website card or app card attached, so there is nothing to schedule.",
+        "card_carousel_or_collection": (
+            "This post uses a carousel or collection card. "
+            "Only a single website card or app card can be scheduled."
+        ),
         "card_not_in_account": (
             "The card on this post (posted by @{handle}) is not in ads account {account}. "
             "A card can only be read and changed from the ads account that created it. "
@@ -1295,6 +1299,60 @@ async def validate_tweet_has_card(access_token: str, tweet_id: str, oauth_token_
 
     card_id = str(card_uri).replace("card://", "")
     return {"tweet": tweet, "card_id": card_id, "raw": data}
+
+def multi_creative_kind(card_json: Dict[str, Any]) -> Optional[str]:
+    """Return 'carousel' or 'collection' for those Ads creatives, otherwise None.
+
+    A single website or app card (IMAGE_WEBSITE, VIDEO_APP, and the same shapes)
+    returns None. Detection uses the Ads card_type, a legacy container key name,
+    and the component structure. Titles, URLs, and other values are not scanned,
+    so the word "carousel" in a headline cannot reject a normal card.
+    """
+    if not isinstance(card_json, dict):
+        return None
+    data = card_json.get("data") if isinstance(card_json.get("data"), dict) else None
+    card = data if isinstance(data, dict) else card_json
+
+    def kind_from_label(text: str) -> Optional[str]:
+        low = str(text or "").lower()
+        if "collection" in low:
+            return "collection"
+        if "carousel" in low:
+            return "carousel"
+        return None
+
+    hit = kind_from_label(card.get("card_type") or "")
+    if hit:
+        return hit
+
+    # Older responses name the creative with a container key instead of card_type.
+    containers = list(card.keys())
+    if card is not card_json:
+        containers.extend(card_json.keys())
+    for key in containers:
+        hit = kind_from_label(key)
+        if hit:
+            return hit
+
+    components = card.get("components") if isinstance(card.get("components"), list) else []
+    for comp in components:
+        if not isinstance(comp, dict):
+            continue
+        ctype = str(comp.get("type") or "")
+        hit = kind_from_label(ctype)
+        if hit:
+            return hit
+        # Carousels and collections attach several media items this way. A single
+        # website or app card uses one MEDIA component with media_key, not these.
+        if ctype.upper() == "SWIPEABLE_MEDIA":
+            return "carousel"
+        slides = comp.get("slides")
+        if isinstance(slides, list) and slides:
+            return "carousel"
+        media_keys = comp.get("media_keys")
+        if isinstance(media_keys, list) and len(media_keys) > 1:
+            return "carousel"
+    return None
 
 def parse_card_response(card_json: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -2139,6 +2197,11 @@ async def execute_card_update(schedule: Dict[str, Any], force: bool = False):
             # If we cannot fetch, we will fall back to a minimal body (old behavior)
             raw_current_card = {}
             print(f"[CARD-UPDATE] WARNING: Could not fetch current card for full structure: {fetch_err}")
+
+        kind = multi_creative_kind(raw_current_card)
+        if kind:
+            print(f"[CARD-UPDATE] Refusing {kind} card {schedule.get('card_id')}")
+            raise ValidateError("card_carousel_or_collection")
 
         payload = build_card_update_payload(
             raw_current_card,
@@ -3315,6 +3378,14 @@ async def api_validate_post(request: Request, user: Dict[str, Any] = Depends(req
     # Always keep the card_id we got from the tweet
     if not card.get("id"):
         card["id"] = card_id
+
+    # Carousel and collection creatives are multi-card formats. Updating one media
+    # slot the way a single website or app card is updated would rewrite the wrong
+    # structure, so they are refused before the editor opens and again before a PUT.
+    kind = multi_creative_kind(raw_ads_card)
+    if kind:
+        print(f"[validate] refusing {kind} card {card_id} (card_type={((raw_ads_card.get('data') or raw_ads_card) if isinstance(raw_ads_card, dict) else {}).get('card_type')})")
+        raise ValidateError("card_carousel_or_collection")
 
     # Fallback title from tweet text if the Ads card had no title
     if not card.get("title"):
