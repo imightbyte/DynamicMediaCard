@@ -1234,6 +1234,75 @@
     return window.tf('msg.validateServerErr', 'The server could not check this post (HTTP {status}). Please try again.', { status: status });
   };
 
+  // Drop the previously loaded card from both panels. A failed validate (carousel,
+  // collection, missing card, and so on) must not leave that post on screen, and
+  // must not leave it available for Save.
+  window.clearLoadedCardView = function clearLoadedCardView() {
+    try { window.__lastLoadedCard = null; } catch (e) {}
+    try { window.__validatedNewMedia = null; } catch (e) {}
+
+    var cur = document.getElementById('current-card-block');
+    if (cur) cur.style.display = 'none';
+    var sched = document.getElementById('schedule-block');
+    if (sched) sched.style.display = 'none';
+
+    ['cc-title', 'cc-media', 'cc-url', 'cc-id'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = '—';
+    });
+    var dimEl = document.getElementById('cc-dim');
+    if (dimEl) { dimEl.textContent = ''; dimEl.style.display = 'none'; }
+    var mtypeEl = document.getElementById('cc-mtype');
+    if (mtypeEl) {
+      mtypeEl.textContent = '';
+      if (mtypeEl.parentElement) mtypeEl.parentElement.style.display = 'none';
+    }
+    var prevImg = document.getElementById('cc-preview-img');
+    if (prevImg) prevImg.removeAttribute('src');
+    var prevWrap = document.getElementById('cc-preview-wrap');
+    if (prevWrap) prevWrap.style.display = 'none';
+    var noteEl = document.getElementById('cc-note');
+    if (noteEl) { noteEl.textContent = ''; noteEl.style.display = 'none'; }
+    var typeNote = document.getElementById('cc-type-note');
+    if (typeNote) typeNote.style.display = 'none';
+    var typeEl = document.getElementById('cc-type');
+    if (typeEl) {
+      typeEl.setAttribute('data-i18n', 'card.badge');
+      typeEl.setAttribute('data-i18n-src-text', 'CARD');
+      typeEl.textContent = window.t('card.badge', 'CARD');
+      typeEl.className = 'text-xs font-medium px-2.5 py-0.5 rounded-full border border-border text-muted-foreground';
+    }
+    ['cc-title-wrap', 'cc-url-wrap', 'new-title-wrap', 'new-url-wrap'].forEach(function (wid) {
+      var w = document.getElementById(wid);
+      if (w) w.style.display = '';
+    });
+
+    ['new-title-input', 'new-media-input', 'new-url-input'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    var mediaStatus = document.getElementById('media-check-status');
+    if (mediaStatus) { mediaStatus.innerHTML = ''; mediaStatus.style.color = ''; }
+    var saveStatus = document.getElementById('save-sched-status');
+    if (saveStatus) { saveStatus.textContent = ''; saveStatus.style.color = ''; }
+
+    try {
+      var root = document.querySelector('[x-data^="cardScheduler"]');
+      var data = root && root.__x && root.__x.$data;
+      if (data) {
+        data.loadedCard = null;
+        data.newTitle = '';
+        data.newMediaId = '';
+        data.newUrl = '';
+        data.mediaDimError = null;
+        data.mediaDimResult = null;
+        data.validatedMediaKey = null;
+        data.urlError = null;
+      }
+    } catch (e) {}
+    try { if (window.resetSeriesBuilder) window.resetSeriesBuilder(); } catch (e) {}
+  };
+
   // === STANDALONE VALIDATE (completely bypasses Alpine for the critical "Validate Post" action) ===
   // This is the reliable entry point for the button and Enter key.
   window.doValidatePost = async function doValidatePost() {
@@ -1290,6 +1359,7 @@
     if (errBox) { errBox.style.display = 'none'; errBox.textContent = ''; }
 
     var gotReply = false;
+    var displayed = false;
     try {
       var r = await fetch('/api/validate-post', {
         method: 'POST',
@@ -1328,11 +1398,12 @@
             errBox.appendChild(hint);
           }
         }
-        // also try to surface in Alpine if it ever wakes up
+        // The post in the box did not load. Hide the previous card so it cannot
+        // be read as this post, and so Save cannot still use it.
+        if (window.clearLoadedCardView) window.clearLoadedCardView();
         var root = document.querySelector('[x-data^="cardScheduler"]');
         if (root && root.__x && root.__x.$data) {
           root.__x.$data.postError = (typeof detail === 'string' ? detail : window.t('msg.adsApiError', 'Ads API error (see details above)'));
-          root.__x.$data.loadedCard = null;
         }
         clearTransient();
         return;
@@ -1581,6 +1652,14 @@
 
       // If Alpine woke up, also drive its validating flag off
       if (data) data.validatingPost = false;
+      displayed = true;
+
+      // A failed validate clears the series builder. If that tab is open, seed it
+      // from the card that just loaded.
+      try {
+        var serPane = document.getElementById('series-pane');
+        if (serPane && serPane.style.display !== 'none' && window.SeriesBuilder) window.SeriesBuilder.ensureInit();
+      } catch (e) {}
 
       // Clear any transient Step 1 / Step 2 message now that we're done
       if (errBox) {
@@ -1590,6 +1669,7 @@
 
     } catch (e) {
       console.error('[doValidatePost] failed', e);
+      if (!displayed && window.clearLoadedCardView) window.clearLoadedCardView();
       clearTransient();
       // Only a fetch that never got an answer is a network problem; anything after
       // that is the page failing to show a card the server did return.
@@ -2614,6 +2694,7 @@
 
         this.validatingPost = true;
         this.postError = null;
+        let loaded = false;
         try {
           const r = await fetch('/api/validate-post', {
             method: 'POST',
@@ -2623,13 +2704,14 @@
           let j = null;
           try { j = await r.json(); } catch (_) {}
           if (!r.ok || !j) {
+            if (window.clearLoadedCardView) window.clearLoadedCardView();
             this.postError = window.validateErrorText(j, r.status);
-            this.loadedCard = null;
             this.showToast(this.postError, true);
             return;
           }
             this.postError = null;
             this.loadedCard = j.card;
+            loaded = true;
             // Aspect ratio (if provided by server from the Ads API) is used as-is for Current Card and checks.
             this.newTitle = this.loadedCard.title || '';
             this.newMediaId = this.loadedCard.media_id || '';
@@ -2706,6 +2788,7 @@
             if (window.updateSaveButtonState) window.updateSaveButtonState();
           } catch(e){}
         } catch (e) {
+          if (!loaded && window.clearLoadedCardView) window.clearLoadedCardView();
           this.postError = window.t('msg.validateNetErr', 'Network error while validating the post.');
           this.showToast(this.postError, true);
         } finally {
@@ -5056,6 +5139,21 @@
     if (msg) { box.textContent = msg; box.style.display = ''; }
     else { box.textContent = ''; box.style.display = 'none'; }
   }
+
+  window.resetSeriesBuilder = function () {
+    S.steps = [];
+    S.seq = 0;
+    S.inited = false;
+    var cont = document.getElementById('series-steps');
+    if (cont) cont.innerHTML = '';
+    var lbl = document.getElementById('series-label-input');
+    if (lbl) lbl.value = '';
+    var stopEl = document.getElementById('series-stop-on-failure');
+    if (stopEl) stopEl.checked = false;
+    setError('');
+    var statusEl = document.getElementById('series-save-status');
+    if (statusEl) { statusEl.textContent = ''; statusEl.style.color = ''; }
+  };
 
   window.SeriesBuilder = {
     applyMedia: function (stepId, obj) {
