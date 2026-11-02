@@ -233,14 +233,65 @@ def count_admins(exclude_id: Optional[int] = None) -> int:
     finally:
         conn.close()
 
-def create_app_user(username: str, password: str, role: str, must_change: bool, created_by: Optional[str]) -> Dict[str, Any]:
+def parse_active_date(value: Any, label: str) -> Optional[str]:
+    """A calendar date as YYYY-MM-DD, or None when the field was left empty."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{label} must be a real calendar date (YYYY-MM-DD).")
+    return parsed.isoformat()
+
+def normalize_active_period(active_from: Any, active_until: Any) -> Tuple[Optional[str], Optional[str]]:
+    start = parse_active_date(active_from, "Active from")
+    end = parse_active_date(active_until, "Active until")
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="Active from must be on or before active until.")
+    return start, end
+
+def account_outside_period(user: Optional[Dict[str, Any]], today: Optional[str] = None) -> bool:
+    """True when a non-admin account is outside its inclusive active period.
+
+    Empty dates mean that end is open, so existing accounts keep working until an
+    admin sets a period. Admins are never limited. Dates are UTC calendar days.
+    """
+    if not user or user.get("role") == ROLE_ADMIN:
+        return False
+    start = (user.get("active_from") or "").strip()
+    end = (user.get("active_until") or "").strip()
+    if not start and not end:
+        return False
+    today = today or datetime.now(timezone.utc).date().isoformat()
+    if start and today < start:
+        return True
+    if end and today > end:
+        return True
+    return False
+
+OUTSIDE_PERIOD_MESSAGE = "This account is outside its active period. Ask an admin to update it."
+
+def create_app_user(
+    username: str,
+    password: str,
+    role: str,
+    must_change: bool,
+    created_by: Optional[str],
+    active_from: Optional[str] = None,
+    active_until: Optional[str] = None,
+) -> Dict[str, Any]:
     username = normalize_username(username)
     conn = get_db()
     try:
         cur = conn.execute(
-            """INSERT INTO users (username, password_hash, role, must_change_password, created_at, created_by)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (username, hash_password(password), role, 1 if must_change else 0, time.time(), created_by),
+            """INSERT INTO users (username, password_hash, role, must_change_password, created_at, created_by,
+                                   active_from, active_until)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (username, hash_password(password), role, 1 if must_change else 0, time.time(), created_by,
+             active_from, active_until),
         )
         conn.commit()
         new_id = cur.lastrowid
@@ -358,6 +409,16 @@ def init_db():
     """)
     try:
         c.execute("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # Inclusive UTC calendar dates. NULL means that end is open. Admins are never
+    # limited by these columns; a promotion to admin clears them.
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN active_from TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN active_until TEXT")
     except Exception:
         pass
     # Records which application account created a schedule, so the read-across
@@ -2381,6 +2442,15 @@ async def app_auth_gate(request: Request, call_next):
         resp = RedirectResponse("/signin?disabled=1", status_code=303)
         clear_session_cookie(resp)
         return resp
+    if user and account_outside_period(user):
+        # The period is checked on each request, so a date that passes while they
+        # are signed in signs them out. Scheduled updates keep running.
+        request.session.pop("app_uid", None)
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": OUTSIDE_PERIOD_MESSAGE}, status_code=401)
+        resp = RedirectResponse("/signin?outside=1", status_code=303)
+        clear_session_cookie(resp)
+        return resp
     if not user:
         # Stale id (e.g. the account was deleted while signed in) — drop it.
         request.session.pop("app_uid", None)
@@ -2796,12 +2866,23 @@ async def signin_page(request: Request):
     # Already signed in — skip the form.
     uid = request.session.get("app_uid")
     current = get_user_by_id(uid) if uid else None
-    if current and not current.get("disabled"):
+    if current and current.get("disabled"):
+        current = None
+    elif current and account_outside_period(current):
+        # Don't bounce them into the tool: the gate would send them straight back.
+        request.session.pop("app_uid", None)
+        current = None
+    if current:
         return RedirectResponse("/", status_code=303)
     if request.query_params.get("disabled"):
         return templates.TemplateResponse(
             "signin.html",
             {"request": request, "error": "This account has been disabled. Ask an admin to enable it.", "disabled": True},
+        )
+    if request.query_params.get("outside"):
+        return templates.TemplateResponse(
+            "signin.html",
+            {"request": request, "error": OUTSIDE_PERIOD_MESSAGE, "outside": True},
         )
     return templates.TemplateResponse("signin.html", {"request": request, "error": None})
 
@@ -2870,6 +2951,12 @@ async def signin_submit(request: Request, username: str = Form(""), password: st
         return templates.TemplateResponse(
             "signin.html",
             {"request": request, "error": "This account has been disabled. Ask an admin to enable it.", "disabled": True},
+            status_code=403,
+        )
+    if account_outside_period(user):
+        return templates.TemplateResponse(
+            "signin.html",
+            {"request": request, "error": OUTSIDE_PERIOD_MESSAGE, "outside": True},
             status_code=403,
         )
     # New session id on privilege change, so a pre-login cookie cannot be replayed.
@@ -2975,6 +3062,9 @@ def _public_user(row: Dict[str, Any]) -> Dict[str, Any]:
         "role_label": ROLE_LABELS.get(row.get("role"), row.get("role")),
         "must_change_password": bool(row.get("must_change_password")),
         "disabled": bool(row.get("disabled")),
+        "active_from": row.get("active_from") or "",
+        "active_until": row.get("active_until") or "",
+        "outside_period": account_outside_period(row),
         "created_at": row.get("created_at"),
         "created_by": row.get("created_by"),
         "last_login_at": row.get("last_login_at"),
@@ -3022,10 +3112,16 @@ async def api_create_user(request: Request):
         raise HTTPException(status_code=400, detail="Unknown role.")
     if get_user_by_username(username):
         raise HTTPException(status_code=409, detail="That username is already taken.")
+    active_from, active_until = normalize_active_period(body.get("active_from"), body.get("active_until"))
+    if role == ROLE_ADMIN and (active_from or active_until):
+        raise HTTPException(status_code=400, detail="Admins are not limited by an active period. Leave the dates empty.")
 
     temp_password = _temp_password_from(body)
     try:
-        created = create_app_user(username, temp_password, role, must_change=True, created_by=admin["username"])
+        created = create_app_user(
+            username, temp_password, role, must_change=True, created_by=admin["username"],
+            active_from=active_from, active_until=active_until,
+        )
     except sqlite3.IntegrityError:
         # Lost a race against a concurrent create of the same name.
         raise HTTPException(status_code=409, detail="That username is already taken.")
@@ -3096,7 +3192,35 @@ async def api_set_user_role(user_id: int, request: Request):
         raise HTTPException(status_code=400, detail="This is the last admin account — promote someone else first.")
     conn = get_db()
     try:
-        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        if role == ROLE_ADMIN:
+            # A promotion drops any period, so demoting later does not revive a stale window.
+            conn.execute(
+                "UPDATE users SET role = ?, active_from = NULL, active_until = NULL WHERE id = ?",
+                (role, user_id),
+            )
+        else:
+            conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"user": _public_user(get_user_by_id(user_id))}
+
+@app.post("/api/admin/users/{user_id}/active-period")
+async def api_set_user_active_period(user_id: int, request: Request):
+    require_admin(request)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if target.get("role") == ROLE_ADMIN:
+        raise HTTPException(status_code=400, detail="Admins are not limited by an active period.")
+    body = await request.json()
+    active_from, active_until = normalize_active_period(body.get("active_from"), body.get("active_until"))
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE users SET active_from = ?, active_until = ? WHERE id = ?",
+            (active_from, active_until, user_id),
+        )
         conn.commit()
     finally:
         conn.close()

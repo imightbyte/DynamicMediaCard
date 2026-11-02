@@ -48,11 +48,31 @@
               data-i18n="admin.create">Create</button>
     </div>
 
+    <div id="nu-period" class="mt-3 flex flex-col sm:flex-row gap-3 sm:items-end">
+      <div>
+        <label for="nu-active-from" class="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5"
+               data-i18n="admin.activeFrom">Active from</label>
+        <input id="nu-active-from" type="date"
+               class="rounded-lg bg-background border border-input px-3 py-2 text-sm outline-none focus:border-primary"
+               style="color-scheme: dark" />
+      </div>
+      <div>
+        <label for="nu-active-until" class="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5"
+               data-i18n="admin.activeUntil">Active until</label>
+        <input id="nu-active-until" type="date"
+               class="rounded-lg bg-background border border-input px-3 py-2 text-sm outline-none focus:border-primary"
+               style="color-scheme: dark" />
+      </div>
+    </div>
+
     <p class="mt-3 text-[11px] text-muted-foreground" data-i18n="admin.roleHelp">
       Admin manages users and sees every schedule. Strategist and CP/CAM see every schedule but cannot manage users. User sees only their own.
     </p>
     <p class="mt-1 text-[11px] text-muted-foreground" data-i18n="admin.tempPasswordHelp">
       Use a different one for each person — they must replace it when they first sign in.
+    </p>
+    <p class="mt-1 text-[11px] text-muted-foreground" data-i18n="admin.periodHelp">
+      Non-admin accounts can sign in only inside this period, including both dates. Leave either date empty for an open end, or both empty for no limit. Admins are not limited. Dates are UTC calendar days, and you can change them later. Scheduled updates keep running outside the period.
     </p>
 
     <div id="nu-error" class="hidden mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert"></div>
@@ -89,11 +109,12 @@
             <th class="px-5 py-2 font-medium" data-i18n="admin.colUser">User</th>
             <th class="px-5 py-2 font-medium" data-i18n="admin.colRole">Role</th>
             <th class="px-5 py-2 font-medium" data-i18n="admin.colStatus">Status</th>
+            <th class="px-5 py-2 font-medium" data-i18n="admin.activePeriod">Active period</th>
             <th class="px-5 py-2 font-medium text-right" data-i18n="admin.colActions">Actions</th>
           </tr>
         </thead>
         <tbody id="u-body" class="divide-y divide-border">
-          <tr><td colspan="4" class="px-5 py-6 text-center text-muted-foreground" data-i18n="admin.loading">Loading…</td></tr>
+          <tr><td colspan="5" class="px-5 py-6 text-center text-muted-foreground" data-i18n="admin.loading">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -132,7 +153,7 @@
   function renderUsers(users) {
     var body = document.getElementById('u-body');
     if (!users.length) {
-      body.innerHTML = '<tr><td colspan="4" class="px-5 py-6 text-center text-muted-foreground">'
+      body.innerHTML = '<tr><td colspan="5" class="px-5 py-6 text-center text-muted-foreground">'
         + esc(window.t('admin.noUsers', 'No users yet.')) + '</td></tr>';
       return;
     }
@@ -146,6 +167,25 @@
             + esc(window.t('admin.pendingFirstSignIn', 'awaiting first sign-in')) + '</span>'
         : '<span class="text-[10px] px-1.5 py-px rounded bg-green-500/10 text-green-400">'
             + esc(window.t('admin.active', 'active')) + '</span>';
+      if (!u.disabled && u.role !== 'admin' && u.outside_period) {
+        status += ' <span class="text-[10px] px-1.5 py-px rounded bg-amber-500/10 text-amber-400">'
+          + esc(window.t('admin.outsidePeriod', 'outside active period')) + '</span>';
+      }
+
+      var periodCell;
+      if (u.role === 'admin') {
+        periodCell = '<span class="text-xs text-muted-foreground">' + esc(window.t('admin.notLimited', 'Not limited')) + '</span>';
+      } else {
+        var dateCls = 'rounded bg-background border border-input px-2 py-1 text-xs outline-none focus:border-primary';
+        periodCell = ''
+          + '<div class="flex flex-wrap items-center gap-1.5">'
+          +   '<input type="date" data-active-from="' + esc(u.id) + '" value="' + esc(u.active_from || '') + '" class="' + dateCls + '" style="color-scheme:dark" aria-label="' + esc(window.t('admin.activeFrom', 'Active from')) + '" />'
+          +   '<span class="text-[10px] text-muted-foreground">' + esc(window.t('admin.periodTo', 'to')) + '</span>'
+          +   '<input type="date" data-active-until="' + esc(u.id) + '" value="' + esc(u.active_until || '') + '" class="' + dateCls + '" style="color-scheme:dark" aria-label="' + esc(window.t('admin.activeUntil', 'Active until')) + '" />'
+          +   '<button type="button" data-save-period="' + esc(u.id) + '" class="text-xs rounded border border-border px-2 py-1 hover:bg-accent transition">'
+          +     esc(window.t('admin.savePeriod', 'Save')) + '</button>'
+          + '</div>';
+      }
 
       return ''
         + '<tr data-user-row="' + esc(u.id) + '">'
@@ -159,6 +199,7 @@
         +     '</select>'
         +   '</td>'
         +   '<td class="px-5 py-3">' + status + '</td>'
+        +   '<td class="px-5 py-3">' + periodCell + '</td>'
         +   '<td class="px-5 py-3 text-right whitespace-nowrap">'
         +     '<button type="button" data-reset="' + esc(u.id) + '" class="text-xs rounded border border-border px-2 py-1 hover:bg-accent transition">'
         +       esc(window.t('admin.resetPassword', 'Reset password')) + '</button> '
@@ -180,7 +221,7 @@
       renderUsers(j.users || []);
     } catch (e) {
       document.getElementById('u-body').innerHTML =
-        '<tr><td colspan="4" class="px-5 py-6 text-center text-destructive">'
+        '<tr><td colspan="5" class="px-5 py-6 text-center text-destructive">'
         + esc(window.t('admin.loadFailed', 'Could not load users.')) + '</td></tr>';
     }
   }
@@ -196,6 +237,8 @@
     var username = document.getElementById('nu-username').value.trim();
     var role = document.getElementById('nu-role').value;
     var tempPassword = document.getElementById('nu-password').value;
+    var activeFrom = document.getElementById('nu-active-from').value;
+    var activeUntil = document.getElementById('nu-active-until').value;
     if (!username) {
       showError(window.t('admin.errNoUsername', 'Enter a username.'));
       return;
@@ -204,7 +247,13 @@
       var res = await fetch('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username, role: role, temp_password: tempPassword })
+        body: JSON.stringify({
+          username: username,
+          role: role,
+          temp_password: tempPassword,
+          active_from: role === 'admin' ? '' : activeFrom,
+          active_until: role === 'admin' ? '' : activeUntil
+        })
       });
       var j = await res.json().catch(function () { return {}; });
       if (!res.ok) {
@@ -213,6 +262,8 @@
       }
       document.getElementById('nu-username').value = '';
       document.getElementById('nu-password').value = '';
+      document.getElementById('nu-active-from').value = '';
+      document.getElementById('nu-active-until').value = '';
       showTempPassword(j.user.username, j.temp_password);
       loadUsers();
     } catch (e) {
@@ -230,6 +281,13 @@
     });
   });
 
+  function syncPeriodFields() {
+    var isAdmin = document.getElementById('nu-role').value === 'admin';
+    document.getElementById('nu-period').classList.toggle('hidden', isAdmin);
+  }
+  document.getElementById('nu-role').addEventListener('change', syncPeriodFields);
+  syncPeriodFields();
+
   document.getElementById('u-refresh').addEventListener('click', loadUsers);
 
   // Delegated so the handlers survive re-rendering the table.
@@ -237,6 +295,31 @@
     var resetBtn = e.target.closest('[data-reset]');
     var delBtn = e.target.closest('[data-delete]');
     var toggleBtn = e.target.closest('[data-toggle-disabled]');
+    var periodBtn = e.target.closest('[data-save-period]');
+
+    if (periodBtn) {
+      clearError();
+      var pid = periodBtn.getAttribute('data-save-period');
+      var row = periodBtn.closest('tr');
+      var fromEl = row && row.querySelector('[data-active-from]');
+      var untilEl = row && row.querySelector('[data-active-until]');
+      try {
+        var pres = await fetch('/api/admin/users/' + encodeURIComponent(pid) + '/active-period', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            active_from: fromEl ? fromEl.value : '',
+            active_until: untilEl ? untilEl.value : ''
+          })
+        });
+        var pj = await pres.json().catch(function () { return {}; });
+        if (!pres.ok) { showError(pj.detail || window.t('admin.errPeriod', 'Could not save the active period.')); return; }
+        loadUsers();
+      } catch (err) {
+        showError(window.t('admin.errNetwork', 'Network error. Please try again.'));
+      }
+      return;
+    }
 
     if (toggleBtn) {
       clearError();
