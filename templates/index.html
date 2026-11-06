@@ -3749,6 +3749,8 @@
       }
       return s;
     });
+    // The server sets can_act; rows added optimistically after a save are the user's own.
+    function canAct(s){ return !s || s.can_act !== false; }
     // "Scheduled by @x" only when the X account that saved it isn't the post's own account.
     function scheduledByHtml(s, cls){
       var by = String((s && s.scheduled_by_handle) || '');
@@ -3864,8 +3866,8 @@
           })() +
         '</div>' +
         '<div class="flex md:flex-col gap-2 shrink-0">' +
-          (s.status === 'pending' ? '<button class="btn-danger text-xs" data-vcancel="' + s.id + '">' + escHtml(window.t('list.cancel', 'Cancel')) + '</button>' : '') +
-          ((s.status !== 'cancelled' && s.status !== 'running') ? '<button class="btn-outline text-xs" data-vrun="' + s.id + '">' + escHtml(window.t('list.runNow', 'Run now')) + '</button>' : '') +
+          (canAct(s) && s.status === 'pending' ? '<button class="btn-danger text-xs" data-vcancel="' + s.id + '">' + escHtml(window.t('list.cancel', 'Cancel')) + '</button>' : '') +
+          (canAct(s) && (s.status !== 'cancelled' && s.status !== 'running') ? '<button class="btn-outline text-xs" data-vrun="' + s.id + '">' + escHtml(window.t('list.runNow', 'Run now')) + '</button>' : '') +
         '</div>' +
       '</div>';
     }
@@ -3945,7 +3947,7 @@
             nextInfo +
           '</div>' +
           '<div class="flex md:flex-col gap-2 shrink-0">' +
-            (hasPending ? '<button class="btn-danger text-xs" data-vcancelseries="' + escHtml(seriesId) + '">' + escHtml(window.t('list.cancelSeries', 'Cancel series')) + '</button>' : '') +
+            (hasPending && canAct(steps[0]) ? '<button class="btn-danger text-xs" data-vcancelseries="' + escHtml(seriesId) + '">' + escHtml(window.t('list.cancelSeries', 'Cancel series')) + '</button>' : '') +
           '</div>' +
         '</div>' +
         '<div class="rounded-xl border border-border divide-y divide-border" data-series-steps="' + escHtml(seriesId) + '" style="' + (expanded ? '' : 'display:none;') + '">' +
