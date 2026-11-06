@@ -1022,6 +1022,8 @@ def _categorize_upload(mime: str, filename: str) -> Tuple[str, str, str]:
     (consistent with _normalize_media_type).
     """
     m = (mime or "").lower()
+    # Browser spellings that X's upload media_type list doesn't accept.
+    m = {"image/jpg": "image/jpeg", "video/x-m4v": "video/mp4"}.get(m, m)
     fn = (filename or "").lower()
     if "gif" in m or fn.endswith(".gif"):
         return "TWEET_GIF", "video", (m or "image/gif")
@@ -1065,7 +1067,9 @@ async def _media_upload_chunked(
         "Authorization": _upload_auth_header("POST", init_url, access_token, oauth_token_secret),
         "Content-Type": "application/json",
     }
-    init_body = {"media_type": mime, "total_bytes": total_bytes, "media_category": media_category}
+    # The v2 upload host only accepts lowercase categories; the Ads media_library call
+    # later keeps the uppercase form.
+    init_body = {"media_type": mime, "total_bytes": total_bytes, "media_category": media_category.lower()}
     r = await client.post(init_url, headers=headers, json=init_body)
     if r.status_code >= 400:
         _raise_upload_error(r, "init")
@@ -1116,7 +1120,7 @@ async def _poll_upload_status(
     deadline = time.time() + max_wait
     last: Dict[str, Any] = {}
     while True:
-        params = {"media_id": media_id}
+        params = {"command": "STATUS", "media_id": media_id}
         headers = {"Authorization": _upload_auth_header("GET", X_UPLOAD_BASE, access_token, oauth_token_secret, extra_params=params)}
         r = await client.get(X_UPLOAD_BASE, headers=headers, params=params)
         if r.status_code >= 400:
