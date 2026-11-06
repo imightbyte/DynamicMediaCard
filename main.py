@@ -166,6 +166,16 @@ def can_manage_users(user: Optional[Dict[str, Any]]) -> bool:
 def can_see_all_schedules(user: Optional[Dict[str, Any]]) -> bool:
     return bool(user) and user.get("role") in ROLES_SEEING_ALL_SCHEDULES
 
+def can_act_on_schedule(app_user: Optional[Dict[str, Any]], x_user: Dict[str, Any], rec: Dict[str, Any]) -> bool:
+    """Run now / cancel: the X account that created it, or any Admin. A schedule always
+    executes with its creator's X token, whoever triggers it."""
+    return rec.get("user_id") == x_user.get("id") or can_manage_users(app_user)
+
+def _acted_by_other_note(app_user: Optional[Dict[str, Any]], x_user: Dict[str, Any], rec: Dict[str, Any]) -> str:
+    if rec.get("user_id") == x_user.get("id"):
+        return ""
+    return f" by admin {(app_user or {}).get('username') or '?'}"
+
 # scrypt comes from the standard library, so there is no native wheel to build on
 # deploy. Parameters follow the OWASP minimum (n=2^14, r=8, p=1).
 _SCRYPT_N = 2 ** 14
@@ -2592,6 +2602,7 @@ async def index(request: Request):
                 return out
             for rec in initial_schedules:
                 rec["changes"] = _light_changes(rec)
+                rec["can_act"] = can_act_on_schedule(current_app_user(request), user, rec)
             # Basic client-friendly order: pending soonest first, then recently executed.
             def _exec_key(r):
                 return (r.get("executed_at") or 0, r.get("created_at") or 0, r.get("scheduled_at") or 0)
@@ -4189,12 +4200,16 @@ async def api_create_series(payload: SeriesCreateIn, request: Request, user: Dic
     return {"ok": True, "series_id": series_id, "series_label": series_label, "schedules": inserted}
 
 @app.post("/api/schedules/series/{series_id}/cancel")
-async def api_cancel_series(series_id: str, user: Dict[str, Any] = Depends(require_user)):
-    # Ensure the series exists and belongs to the caller.
-    owned = [rec for rec in SCHEDULES.values() if rec.get("series_id") == series_id and rec.get("user_id") == user["id"]]
+async def api_cancel_series(series_id: str, request: Request, user: Dict[str, Any] = Depends(require_user)):
+    app_user = current_app_user(request)
+    owned = [rec for rec in SCHEDULES.values()
+             if rec.get("series_id") == series_id and can_act_on_schedule(app_user, user, rec)]
     if not owned:
         raise HTTPException(404, "Series not found")
-    cancelled = _cancel_remaining_series_steps(series_id, reason="Series cancelled by user.")
+    note = _acted_by_other_note(app_user, user, owned[0])
+    if note:
+        print(f"[schedules] series {series_id} cancelled{note}")
+    cancelled = _cancel_remaining_series_steps(series_id, reason=f"Series cancelled{note or ' by user'}.")
     return {"ok": True, "cancelled": cancelled}
 
 @app.get("/api/schedules")
@@ -4307,6 +4322,7 @@ async def api_list_schedules(request: Request, user: Dict[str, Any] = Depends(re
         rec["series_label"] = rec.get("series_label") or None
         rec["step"] = rec.get("step") if rec.get("step") is not None else None
         rec["stop_on_failure"] = int(rec.get("stop_on_failure") or 0)
+        rec["can_act"] = can_act_on_schedule(current_app_user(request), user, rec)
 
     # Attach a per-series total count so the frontend can show progress without extra derivation.
     _series_totals: Dict[str, int] = {}
@@ -4336,21 +4352,30 @@ async def api_list_schedules(request: Request, user: Dict[str, Any] = Depends(re
     return {"schedules": ordered}
 
 @app.delete("/api/schedules/{sid}")
-async def api_cancel_schedule(sid: int, user: Dict[str, Any] = Depends(require_user)):
+async def api_cancel_schedule(sid: int, request: Request, user: Dict[str, Any] = Depends(require_user)):
+    app_user = current_app_user(request)
     rec = SCHEDULES.get(sid)
-    if not rec or rec.get("user_id") != user["id"]:
+    if not rec or not can_act_on_schedule(app_user, user, rec):
         raise HTTPException(404, "Schedule not found")
     remove_schedule_job(sid)  # cancel the waiting APScheduler job
     rec["status"] = "cancelled"
     rec["executed_at"] = rec.get("executed_at") or time.time()
+    note = _acted_by_other_note(app_user, user, rec)
+    if note:
+        rec["result"] = f"Cancelled{note}."
+        print(f"[schedules] sid={sid} cancelled{note}")
     persist_schedule(rec)
     return {"ok": True}
 
 @app.post("/api/schedules/{sid}/execute")
-async def api_force_execute(sid: int, user: Dict[str, Any] = Depends(require_user)):
+async def api_force_execute(sid: int, request: Request, user: Dict[str, Any] = Depends(require_user)):
+    app_user = current_app_user(request)
     rec = SCHEDULES.get(sid)
-    if not rec or rec.get("user_id") != user["id"]:
+    if not rec or not can_act_on_schedule(app_user, user, rec):
         raise HTTPException(404, "Schedule not found")
+    note = _acted_by_other_note(app_user, user, rec)
+    if note:
+        print(f"[schedules] sid={sid} run now{note}")
     # Cancel the scheduled job — we're running it now instead.
     remove_schedule_job(sid)
     await execute_card_update(rec, force=True)
