@@ -1,10 +1,12 @@
-# Dynamic Media Card Tool
+# Scheduled Adaptive Creative
+
+Formerly known as "Dynamic Media Card Tool".
 
 **Link:** https://dynamic-media-card.onrender.com/
 
 ## User Guide
 
-Dynamic Media Card Tool lets you schedule an update to an existing X website card or app card — swapping its media, changing its title, and changing its destination URL — on a post you've already published. At the exact date and time you choose, the tool automatically applies the new creative to the card through the X Ads API.
+Scheduled Adaptive Creative lets you schedule an update to an existing X website card or app card — swapping its media, changing its title, and changing its destination URL — on a post you've already published. At the exact date and time you choose, the tool automatically applies the new creative to the card through the X Ads API.
 
 You'll need an active X Ads account at [ads.x.com](https://ads.x.com) (required to read and update card creatives via the Ads API).
 
