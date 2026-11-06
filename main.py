@@ -1067,8 +1067,7 @@ async def _media_upload_chunked(
         "Authorization": _upload_auth_header("POST", init_url, access_token, oauth_token_secret),
         "Content-Type": "application/json",
     }
-    # The v2 upload host only accepts lowercase categories; the Ads media_library call
-    # later keeps the uppercase form.
+    # The v2 upload host only accepts lowercase categories.
     init_body = {"media_type": mime, "total_bytes": total_bytes, "media_category": media_category.lower()}
     r = await client.post(init_url, headers=headers, json=init_body)
     if r.status_code >= 400:
@@ -3733,7 +3732,8 @@ async def api_media_upload(
         raise HTTPException(502, detail="Upload finished but X did not return a media_key.")
 
     # Register the uploaded media in the Ads media library (params go in the query string).
-    add_params = {"media_key": media_key, "media_category": media_category, "file_name": file_name}
+    # media_category is rejected as deprecated here; X infers it from the media_key.
+    add_params = {"media_key": media_key, "file_name": file_name}
     try:
         await ads_post(f"/accounts/{ads_account_id}/media_library", access, add_params, oauth_token_secret=secret)
     except HTTPException as e:
