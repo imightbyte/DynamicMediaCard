@@ -1,5 +1,5 @@
 """
-Dynamic Media Card Tool — Schedule X Website/App Card updates via X Ads API.
+Scheduled Adaptive Creative — Schedule X Website/App Card updates via X Ads API.
 
 - Uses X OAuth 1.0a (3-legged) for sign-in (required for Ads API).
 - Schedules are persisted in SQLite so background cron jobs survive server restarts.
@@ -2381,7 +2381,7 @@ async def execute_card_update(schedule: Dict[str, Any], force: bool = False):
 # FastAPI app + templates
 # --------------------------------------------------------------------------------------
 
-app = FastAPI(title="Dynamic Media Card Tool", docs_url=None, redoc_url=None)
+app = FastAPI(title="Scheduled Adaptive Creative", docs_url=None, redoc_url=None)
 
 @app.exception_handler(ValidateError)
 async def _validate_error_handler(request: Request, exc: ValidateError):

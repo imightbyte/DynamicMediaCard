@@ -1,10 +1,12 @@
-# Dynamic Media Card Tool
+# Scheduled Adaptive Creative
+
+Formerly known as "Dynamic Media Card Tool".
 
 Schedule updates to your X (Twitter) Website Cards and App Download Cards at a future time.
 
 This app has the **exact same theme, styling, and footer** as [Post Xploder](https://promoted-threads.onrender.com/).
 
-**Top-left branding:** "Dynamic Media Card Tool"  
+**Top-left branding:** "Scheduled Adaptive Creative"  
 **Sign-in:** Pure X OAuth 1.0a only. Clicking "Sign in with X" goes directly to X's authorization page. No email/password or other providers.
   OAuth1 tokens are used for both X API v2 and the Ads API.
 
